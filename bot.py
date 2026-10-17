@@ -75,12 +75,18 @@ def analyze_4h(coin):
         
         if len(h) < 10: return None
         last = h.iloc[-1]
+        
+        # شروط سیگنال معمولی
         if (last['close'] > last['hh'] and last['close'] > last['ema200'] and 
             last['close'] > last['ema200_daily'] and last['adx'] > 20 and last['volume'] > 1.2 * last['vol_sma']):
             
             sl = last['close'] - (5.0 * last['atr'])
             tp = last['close'] + ((last['close'] - sl) * 2.0)
-            return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr']}
+            
+            # تشخیص سیگنال فوق‌العاده استثنایی (ADX > 35 و حجم > 1.5 برابر)
+            is_exceptional = (last['adx'] > 35) and (last['volume'] > 1.5 * last['vol_sma'])
+            
+            return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr'], "is_exceptional": is_exceptional}
         return None
     except: return None
 
@@ -93,7 +99,10 @@ def run():
     if status == 200 and isinstance(positions, list):
         open_positions = [p for p in positions if p.get('status') == 'OPEN']
     
-    # 1. مدیریت پوزیشن‌های باز (ریسک‌فری و تریلینگ)
+    bot_positions = []
+    open_symbols = []
+    
+    # جدا کردن پوزیشن‌های ربات از پوزیشن‌های دستی تو
     for pos in open_positions:
         try:
             size = float(pos.get('size', 0))
@@ -101,12 +110,17 @@ def run():
             lev = float(pos.get('leverage', 1))
             pos_margin = (size * entry) / lev
             
-            # فقط پوزیشن‌های خود ربات (مارجین 1، 2، 3)
-            if round(pos_margin, 1) not in [1.0, 2.0, 3.0]:
-                continue
+            # مارجین 1، 2 یا 3 دلار یعنی کار رباته
+            if round(pos_margin, 1) in [1.0, 2.0, 3.0]:
+                bot_positions.append(pos)
+                open_symbols.append(pos['symbol'])
         except:
             continue
 
+    print(f"تعداد پوزیشن‌های فعال ربات: {len(bot_positions)}")
+    
+    # 1. مدیریت پوزیشن‌های ربات (ریسک‌فری و تریلینگ)
+    for pos in bot_positions:
         symbol = pos['symbol']
         coin = symbol.replace("USDT", "")
         entry = float(pos.get('entryPrice', 0))
@@ -122,33 +136,25 @@ def run():
         is_risk_free = False
 
         if side == 'LONG':
-            # شرط ریسک فری: اگر قیمت نصف راه تا TP رو رفته باشه و استاپ هنوز زیر نقطه وروده
             if tp > entry and current_sl < entry:
                 halfway = entry + ((tp - entry) / 2)
                 if current_price >= halfway:
                     new_sl = entry
                     is_risk_free = True
                     
-            # شرط تریلینگ استاپ: اگر قیمت بالاتر رفت، استاپ رو بکش بالا
             trailing_sl = current_price - (5.0 * r['atr'])
             if trailing_sl > new_sl:
                 new_sl = trailing_sl
                 
-        elif side == 'SHORT':
-            # (منطق شورت هم به همین شکل، اگر خواستی بعداً اضافه میکنیم، فعلاً ربات فقط لانگ میگیره)
-            pass
-
-        # اگر حد ضرر جدید با قبلی فرق داشت، آپدیتش کن
         if new_sl != current_sl and new_sl > 0:
             p_status, p_res = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", {"stopLoss": str(round(new_sl, 4))})
             if p_status in [200, 201]:
                 if is_risk_free and new_sl == entry:
-                    send_telegram(f"🛡 <b>پوزیشن ریسک‌فری شد!</b>\nارز: #{coin}\nحد ضرر به نقطه ورود ({entry:.4f}) منتقل شد. سودت الان تضمین شده!")
+                    send_telegram(f"🛡 <b>پوزیشن ریسک‌فری شد!</b>\nارز: #{coin}\nحد ضرر به نقطه ورود ({entry:.4f}) منتقل شد.")
                 else:
                     send_telegram(f"🔄 <b>آپدیت حد ضرر (Trailing)</b>\nارز: #{coin}\nحد ضرر جدید: {new_sl:.4f}")
 
-    # 2. باز کردن پوزیشن‌های جدید
-    open_symbols = [p['symbol'] for p in open_positions]
+    # 2. باز کردن پوزیشن‌های جدید با محدودیت 3 عدد
     found_count = 0
     
     for coin in UNIVERSE:
@@ -157,6 +163,15 @@ def run():
             
         r = analyze_4h(coin)
         if r:
+            # 🛑 چک کردن محدودیت 3 پوزیشن
+            if len(bot_positions) >= 3:
+                if not r['is_exceptional']:
+                    print(f"سیگنال {coin} رد شد. چون ربات ۳ پوزیشن باز دارد و این سیگنال فوق‌العاده نیست.")
+                    continue
+                else:
+                    print(f"⚠️ استثنا! سیگنال {coin} با وجود ۳ پوزیشن باز، باز می‌شود چون فوق‌العاده قوی است.")
+
+            # مدیریت سرمایه ثابت
             if r['adx'] > 35: margin = 3.0
             elif r['adx'] > 25: margin = 2.0
             else: margin = 1.0
@@ -170,12 +185,13 @@ def run():
             if o_status in [200, 201]:
                 send_telegram(f"🚀 <b>پوزیشن جدید باز شد</b> 🚀\n🪙 {coin} | مارجین: {margin}$\n🎯 TP2: {r['tp']:.4f}\n🛑 SL: {r['sl']:.4f}\n📊 ADX: {r['adx']:.1f}")
                 found_count += 1
+                bot_positions.append({"symbol": symbol}) # اضافه کردن به لیست برای چک کردن در همین اجرا
             else:
                 print(f"خطا در {coin}: {o_res}")
         time.sleep(0.5)
         
     if found_count == 0:
-        print("اسکن تمام شد. سیگنال جدیدی پیدا نشد یا همه در موقعیت بودند.")
+        print("اسکن تمام شد. سیگنال جدیدی پیدا نشد یا محدودیت‌ها اجازه ندادند.")
 
 if __name__ == "__main__":
     run()
