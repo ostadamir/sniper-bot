@@ -1,37 +1,45 @@
-import time, os, requests, ccxt
+import time, os, requests, ccxt, hmac, hashlib, json
 import numpy as np, pandas as pd
 
-# خواندن توکن و چت‌آیدی از تنظیمات گیت‌هاب
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+# ================= تنظیمات =================
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-if not TOKEN or not CHAT_ID:
-    print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is not set!")
-    exit()
+TRUETRADE_KEY = "KnEDfEai0PDBh36LbXWWptvYru2tPTYbSEMvBcbH"
+TRUETRADE_SECRET = "4605eb72c3b418ce5ca129aa75a4ec6e7aa21bcb76a537068b7195288aa2dcb8"
+TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 
-BASE = f"https://api.telegram.org/bot{TOKEN}"
+UNIVERSE = ["ETH", "BNB", "NEAR", "AVAX", "LINK", "ICP", "TRX", "DOGE", "BTC", "UNI"]
 ex = ccxt.kucoin()
 
-UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "LINK", "LTC", "AVAX",
-            "DOT", "TRX", "ATOM", "NEAR", "UNI", "ETC", "BCH", "XLM", "FIL", "APT",
-            "ARB", "OP", "INJ", "AAVE", "SUI", "HBAR", "TON", "ICP"]
-RISK = 0.01
-PARAM_NB = 55
-PARAM_ATR_MULT = 5.0
-PARAM_ADX_MIN = 20
-PARAM_VOL_MULT = 1.2
-
-def send(chat_id, text):
+# ================= توابع تلگرام =================
+def send_telegram(text):
     try:
-        requests.post(f"{BASE}/sendMessage", json={"chat_id": chat_id, "text": text}, timeout=10)
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except: pass
 
-def fetch(coin, tf, limit=600):
-    rows = ex.fetch_ohlcv(coin + "/USDT", tf, limit=limit)
-    h = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
-    h['time'] = pd.to_datetime(h['time'], unit='ms')
-    return h.iloc[:-1].reset_index(drop=True)
+# ================= توابع ترو ترید =================
+def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
+    payload = f"{timestamp}{method.upper()}{uri}"
+    return hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
 
+def tt_request(method, uri, payload=None):
+    timestamp = str(int(time.time() * 1000))
+    signature = tt_sign(TRUETRADE_SECRET, timestamp, method, uri)
+    headers = {"X-API-Key": TRUETRADE_KEY, "X-Timestamp": timestamp, "X-Signature": signature, "Content-Type": "application/json"}
+    try:
+        if method == "GET":
+            res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
+        elif method == "POST":
+            res = requests.post(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=15)
+        elif method == "PATCH":
+            res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=15)
+        return res.status_code, res.json() if res.text else {}
+    except Exception as e:
+        return 500, str(e)
+
+# ================= محاسبات استراتژی =================
 def calc_ema(series, period): return series.ewm(span=period, adjust=False).mean()
 def calc_atr(high, low, close, period=14):
     tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
@@ -47,9 +55,15 @@ def calc_adx(high, low, close, period=14):
     dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     return dx.rolling(window=period).mean()
 
-def analyze(coin, tf, side="LONG"):
+def fetch(coin, tf, limit=600):
+    rows = ex.fetch_ohlcv(coin + "/USDT", tf, limit=limit)
+    h = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
+    h['time'] = pd.to_datetime(h['time'], unit='ms')
+    return h.iloc[:-1].reset_index(drop=True)
+
+def analyze_4h(coin):
     try:
-        h_tf = fetch(coin, tf)
+        h_tf = fetch(coin, "4h")
         h_1d = fetch(coin, "1d", 300)
         h_1d['ema200_daily'] = calc_ema(h_1d['close'], 200)
         h = pd.merge_asof(h_tf, h_1d[['time', 'ema200_daily']], on='time', direction='backward')
@@ -57,61 +71,69 @@ def analyze(coin, tf, side="LONG"):
         h['adx'] = calc_adx(h['high'], h['low'], h['close'], 14)
         h['atr'] = calc_atr(h['high'], h['low'], h['close'], 14)
         h['vol_sma'] = h['volume'].rolling(window=20).mean()
-        h['hh'] = h['high'].rolling(window=PARAM_NB).max().shift(1)
-        h['ll'] = h['low'].rolling(window=PARAM_NB).min().shift(1)
+        h['hh'] = h['high'].rolling(window=55).max().shift(1)
         h = h.dropna().reset_index(drop=True)
         
         if len(h) < 10: return None
         last = h.iloc[-1]
-        
-        adx_ok = last['adx'] > PARAM_ADX_MIN
-        vol_ok = last['volume'] > PARAM_VOL_MULT * last['vol_sma']
-        
-        if side == "LONG":
-            breakout = last['close'] > last['hh']
-            regime = (last['close'] > last['ema200']) and (last['close'] > last['ema200_daily'])
-            if breakout and regime and adx_ok and vol_ok:
-                sl = last['close'] - (PARAM_ATR_MULT * last['atr'])
-                return {"price": last['close'], "sl": sl, "adx": last['adx']}
-        else:
-            breakout = last['close'] < last['ll']
-            regime = (last['close'] < last['ema200']) and (last['close'] < last['ema200_daily'])
-            if breakout and regime and adx_ok and vol_ok:
-                sl = last['close'] + (PARAM_ATR_MULT * last['atr'])
-                return {"price": last['close'], "sl": sl, "adx": last['adx']}
+        if (last['close'] > last['hh'] and last['close'] > last['ema200'] and 
+            last['close'] > last['ema200_daily'] and last['adx'] > 20 and last['volume'] > 1.2 * last['vol_sma']):
+            
+            sl = last['close'] - (5.0 * last['atr'])
+            tp = last['close'] + ((last['close'] - sl) * 2.0) # TP2
+            return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr']}
         return None
     except: return None
 
-def fmt(x): return f"{x: .2f}" if x >= 1 else f"{x:.5g}"
+# ================= اجرای اصلی =================
+def run():
+    print("شروع اسکن...")
+    status, positions = tt_request("GET", "/futures/positions")
+    open_positions = []
+    if status == 200 and isinstance(positions, list):
+        open_positions = [p for p in positions if p.get('status') == 'OPEN']
+    
+    # 1. آپدیت تریلینگ استاپ (Trailing Stop)
+    for pos in open_positions:
+        symbol = pos['symbol']
+        coin = symbol.replace("USDT", "")
+        entry = float(pos['entryPrice'])
+        current_sl = float(pos.get('stopLoss', 0))
+        
+        r = analyze_4h(coin)
+        if r:
+            new_sl = r['price'] - (5.0 * r['atr'])
+            if new_sl > current_sl and new_sl > entry: 
+                p_status, p_res = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", {"stopLoss": str(round(new_sl, 4))})
+                if p_status in [200, 201]:
+                    send_telegram(f"🔄 <b>آپدیت حد ضرر (Trailing)</b>\nارز: #{coin}\nحد ضرر جدید: {new_sl:.4f}")
 
-def signal_text(coin, side, r, tf):
-    p, sl, adx = r["price"], r["sl"], r.get("adx", 0)
-    R = abs(p - sl); d = 1 if side == "LONG" else -1
-    tp = [p + d * R * k for k in (1, 2, 3)]
-    size = min(100, RISK / (R / p) * 100) if R > 0 else 1
-    return (f"🎯 {coin}/USDT - {side} SIGNAL ({tf})\n"
-            f"🔥 استراتژی: Sniper V2\n"
-            f"📊 قدرت روند (ADX): {adx:.1f}\n\n"
-            f"🎯 Entry: {fmt(p)}\n"
-            f"🎯 TP1: {fmt(tp[0])}\n"
-            f"🎯 TP2: {fmt(tp[1])}\n"
-            f"🎯 TP3: {fmt(tp[2])}\n"
-            f"🛑 SL (5x ATR): {fmt(sl)}\n\n"
-            f"💰 Risk: {RISK*100:.0f}% of portfolio = {size:.0f}% margin\n")
+    # 2. باز کردن پوزیشن‌های جدید
+    open_symbols = [p['symbol'] for p in open_positions]
+    found_count = 0
+    
+    for coin in UNIVERSE:
+        symbol = f"{coin}USDT"
+        if symbol in open_symbols: continue
+            
+        r = analyze_4h(coin)
+        if r:
+            if r['adx'] > 35: margin = 3.0
+            elif r['adx'] > 25: margin = 2.0
+            else: margin = 1.0
+            
+            payload = {
+                "symbol": symbol, "side": "LONG", "tradeType": "MARKET", "leverage": 10,
+                "cost": str(margin), "takeProfit": str(round(r['tp'], 4)), "stopLoss": str(round(r['sl'], 4)), "walletType": "debit"
+            }
+            o_status, o_res = tt_request("POST", "/futures/positions", payload)
+            
+            if o_status in [200, 201]:
+                send_telegram(f"🚀 <b>پوزیشن جدید باز شد</b> 🚀\n🪙 {coin} | مارجین: {margin}$\n🎯 TP2: {r['tp']:.4f}\n🛑 SL: {r['sl']:.4f}\n📊 ADX: {r['adx']:.1f}")
+                found_count += 1
+            else:
+                print(f"خطا در {coin}: {o_res}")
+        time.sleep(0.5)
 
 if __name__ == "__main__":
-    print("ربات شروع به کار کرد...")
-    send(CHAT_ID, "✅ ربات روی GitHub Actions اجرا شد و در حال اسکن بازار است...")
-    
-    found = 0
-    for coin in UNIVERSE:
-        r = analyze(coin, "4h", "LONG")
-        if r:
-            send(CHAT_ID, signal_text(coin, "LONG", r, "4h"))
-            found += 1
-        time.sleep(0.2)
-        
-    if found == 0:
-        send(CHAT_ID, "ℹ️ اسکن تمام شد. هیچ سیگنال جدیدی پیدا نشد.")
-    else:
-        send(CHAT_ID, f"✅ اسکن تمام شد. {found} سیگنال پیدا شد.")
+    run()
