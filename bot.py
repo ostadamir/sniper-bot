@@ -105,9 +105,18 @@ def run():
         try:
             side = pos.get('side')
             margin = float(pos.get('initialMargin', 0))
+            lev = float(pos.get('leverage', 1))
+            coin = pos['symbol'].replace("USDT", "")
             
-            # فقط پوزیشن‌های LONG که مارجینشون 1، 2 یا 3 دلار هست کار رباته
-            if side == 'LONG' and round(margin, 1) in [1.0, 2.0, 3.0]:
+            # 🛠 فیلترهای ضدگلوله برای تشخیص پوزیشن‌های ربات:
+            # 1. LONG باشد
+            # 2. مارجین 1، 2 یا 3 دلار باشد
+            # 3. اهرم دقیقا 10 باشد (ربات همیشه 10 میذاره)
+            # 4. ارز حتما جزو 10 ارز VIP باشد (WLD جزو این لیست نیست)
+            is_bot = (side == 'LONG' and round(margin, 1) in [1.0, 2.0, 3.0] 
+                      and lev == 10 and coin in UNIVERSE)
+            
+            if is_bot:
                 bot_positions.append(pos)
                 open_symbols.append(pos['symbol'])
         except:
