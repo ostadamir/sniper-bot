@@ -12,7 +12,6 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 UNIVERSE = ["ETH", "BNB", "NEAR", "AVAX", "LINK", "ICP", "TRX", "DOGE", "BTC", "UNI"]
 ex = ccxt.kucoin()
 
-# ================= توابع تلگرام =================
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -94,33 +93,58 @@ def run():
     if status == 200 and isinstance(positions, list):
         open_positions = [p for p in positions if p.get('status') == 'OPEN']
     
-    # 1. آپدیت تریلینگ استاپ (فقط برای پوزیشن‌های ربات)
+    # 1. مدیریت پوزیشن‌های باز (ریسک‌فری و تریلینگ)
     for pos in open_positions:
-        # 🛡️ فیلتر امنیتی: فقط پوزیشن‌هایی که مارجینشون 1، 2 یا 3 دلاره (کار ربات)
         try:
             size = float(pos.get('size', 0))
-            entry = float(pos.get('entryPrice', pos.get('markPrice', 0)))
+            entry = float(pos.get('entryPrice', 0))
             lev = float(pos.get('leverage', 1))
             pos_margin = (size * entry) / lev
             
-            # اگر مارجین گرد شده جزو 1, 2, 3 نبود، یعنی دستی باز شده، بهش دست نزن
+            # فقط پوزیشن‌های خود ربات (مارجین 1، 2، 3)
             if round(pos_margin, 1) not in [1.0, 2.0, 3.0]:
-                print(f"رد کردن پوزیشن دستی: {pos['symbol']} (مارجین: {pos_margin:.2f})")
                 continue
         except:
             continue
 
         symbol = pos['symbol']
         coin = symbol.replace("USDT", "")
-        entry = float(pos.get('entryPrice', pos.get('markPrice', 0)))
+        entry = float(pos.get('entryPrice', 0))
+        current_price = float(pos.get('markPrice', 0))
+        tp = float(pos.get('takeProfit', 0))
         current_sl = float(pos.get('stopLoss', 0))
+        side = pos.get('side', 'LONG')
         
         r = analyze_4h(coin)
-        if r:
-            new_sl = r['price'] - (5.0 * r['atr'])
-            if new_sl > current_sl and new_sl > entry: 
-                p_status, p_res = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", {"stopLoss": str(round(new_sl, 4))})
-                if p_status in [200, 201]:
+        if not r: continue
+
+        new_sl = current_sl
+        is_risk_free = False
+
+        if side == 'LONG':
+            # شرط ریسک فری: اگر قیمت نصف راه تا TP رو رفته باشه و استاپ هنوز زیر نقطه وروده
+            if tp > entry and current_sl < entry:
+                halfway = entry + ((tp - entry) / 2)
+                if current_price >= halfway:
+                    new_sl = entry
+                    is_risk_free = True
+                    
+            # شرط تریلینگ استاپ: اگر قیمت بالاتر رفت، استاپ رو بکش بالا
+            trailing_sl = current_price - (5.0 * r['atr'])
+            if trailing_sl > new_sl:
+                new_sl = trailing_sl
+                
+        elif side == 'SHORT':
+            # (منطق شورت هم به همین شکل، اگر خواستی بعداً اضافه میکنیم، فعلاً ربات فقط لانگ میگیره)
+            pass
+
+        # اگر حد ضرر جدید با قبلی فرق داشت، آپدیتش کن
+        if new_sl != current_sl and new_sl > 0:
+            p_status, p_res = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", {"stopLoss": str(round(new_sl, 4))})
+            if p_status in [200, 201]:
+                if is_risk_free and new_sl == entry:
+                    send_telegram(f"🛡 <b>پوزیشن ریسک‌فری شد!</b>\nارز: #{coin}\nحد ضرر به نقطه ورود ({entry:.4f}) منتقل شد. سودت الان تضمین شده!")
+                else:
                     send_telegram(f"🔄 <b>آپدیت حد ضرر (Trailing)</b>\nارز: #{coin}\nحد ضرر جدید: {new_sl:.4f}")
 
     # 2. باز کردن پوزیشن‌های جدید
