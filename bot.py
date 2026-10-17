@@ -1,7 +1,6 @@
 import time, os, requests, ccxt, hmac, hashlib, json
 import numpy as np, pandas as pd
 
-# ================= تنظیمات =================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -12,14 +11,12 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 UNIVERSE = ["ETH", "BNB", "NEAR", "AVAX", "LINK", "ICP", "TRX", "DOGE", "BTC", "UNI"]
 ex = ccxt.kucoin()
 
-# ================= توابع تلگرام =================
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except: pass
 
-# ================= توابع ترو ترید =================
 def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
     payload = f"{timestamp}{method.upper()}{uri}"
     return hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
@@ -39,7 +36,6 @@ def tt_request(method, uri, payload=None):
     except Exception as e:
         return 500, str(e)
 
-# ================= محاسبات استراتژی =================
 def calc_ema(series, period): return series.ewm(span=period, adjust=False).mean()
 def calc_atr(high, low, close, period=14):
     tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
@@ -80,20 +76,22 @@ def analyze_4h(coin):
             last['close'] > last['ema200_daily'] and last['adx'] > 20 and last['volume'] > 1.2 * last['vol_sma']):
             
             sl = last['close'] - (5.0 * last['atr'])
-            tp = last['close'] + ((last['close'] - sl) * 2.0) # TP2
+            tp = last['close'] + ((last['close'] - sl) * 2.0)
             return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr']}
         return None
     except: return None
 
-# ================= اجرای اصلی =================
 def run():
     print("شروع اسکن...")
+    
+    # 🚨 پیام تست برای بررسی اتصال به ترو ترید
     status, positions = tt_request("GET", "/futures/positions")
+    send_telegram(f"📡 <b>تست اتصال گیت‌هاب به ترو ترید:</b>\nکد وضعیت: {status}")
+    
     open_positions = []
     if status == 200 and isinstance(positions, list):
         open_positions = [p for p in positions if p.get('status') == 'OPEN']
     
-    # 1. آپدیت تریلینگ استاپ (Trailing Stop)
     for pos in open_positions:
         symbol = pos['symbol']
         coin = symbol.replace("USDT", "")
@@ -108,7 +106,6 @@ def run():
                 if p_status in [200, 201]:
                     send_telegram(f"🔄 <b>آپدیت حد ضرر (Trailing)</b>\nارز: #{coin}\nحد ضرر جدید: {new_sl:.4f}")
 
-    # 2. باز کردن پوزیشن‌های جدید
     open_symbols = [p['symbol'] for p in open_positions]
     found_count = 0
     
@@ -134,6 +131,9 @@ def run():
             else:
                 print(f"خطا در {coin}: {o_res}")
         time.sleep(0.5)
+        
+    if found_count == 0:
+        print("اسکن تمام شد. سیگنالی پیدا نشد.")
 
 if __name__ == "__main__":
     run()
