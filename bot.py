@@ -1,10 +1,12 @@
 import time, os, requests, ccxt
 import numpy as np, pandas as pd
 
-# خواندن توکن از تنظیمات گیت‌هاب
+# خواندن توکن و چت‌آیدی از تنظیمات گیت‌هاب
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
-if not TOKEN:
-    print("ERROR: TELEGRAM_TOKEN is not set!")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+if not TOKEN or not CHAT_ID:
+    print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID is not set!")
     exit()
 
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -28,7 +30,7 @@ def fetch(coin, tf, limit=600):
     rows = ex.fetch_ohlcv(coin + "/USDT", tf, limit=limit)
     h = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
     h['time'] = pd.to_datetime(h['time'], unit='ms')
-    return h.iloc[:-1].reset_index(drop=True) # حذف کندل باز فعلی
+    return h.iloc[:-1].reset_index(drop=True)
 
 def calc_ema(series, period): return series.ewm(span=period, adjust=False).mean()
 def calc_atr(high, low, close, period=14):
@@ -97,35 +99,19 @@ def signal_text(coin, side, r, tf):
             f"🛑 SL (5x ATR): {fmt(sl)}\n\n"
             f"💰 Risk: {RISK*100:.0f}% of portfolio = {size:.0f}% margin\n")
 
-def find_chat():
-    print("در حال دریافت چت آیدی...")
-    r = requests.get(BASE + "/getUpdates", timeout=15).json()
-    if r.get("ok"):
-        res = r.get("result", [])
-        for u in reversed(res):
-            if "message" in u:
-                return u["message"]["chat"]["id"]
-    return None
-
 if __name__ == "__main__":
     print("ربات شروع به کار کرد...")
-    chat_id = find_chat()
-    if not chat_id:
-        print("چت آیدی پیدا نشد. لطفا یک پیام /start به ربات بفرستید.")
-        exit()
-        
-    print(f"چت آیدی پیدا شد: {chat_id}")
-    send(chat_id, "✅ ربات روی GitHub Actions اجرا شد و در حال اسکن بازار است...")
+    send(CHAT_ID, "✅ ربات روی GitHub Actions اجرا شد و در حال اسکن بازار است...")
     
     found = 0
     for coin in UNIVERSE:
         r = analyze(coin, "4h", "LONG")
         if r:
-            send(chat_id, signal_text(coin, "LONG", r, "4h"))
+            send(CHAT_ID, signal_text(coin, "LONG", r, "4h"))
             found += 1
         time.sleep(0.2)
         
     if found == 0:
-        send(chat_id, "ℹ️ اسکن تمام شد. هیچ سیگنال جدیدی پیدا نشد.")
+        send(CHAT_ID, "ℹ️ اسکن تمام شد. هیچ سیگنال جدیدی پیدا نشد.")
     else:
-        send(chat_id, f"✅ اسکن تمام شد. {found} سیگنال پیدا شد.")
+        send(CHAT_ID, f"✅ اسکن تمام شد. {found} سیگنال پیدا شد.")
