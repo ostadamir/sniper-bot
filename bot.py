@@ -76,14 +76,12 @@ def analyze_4h(coin):
         if len(h) < 10: return None
         last = h.iloc[-1]
         
-        # شروط سیگنال معمولی
         if (last['close'] > last['hh'] and last['close'] > last['ema200'] and 
             last['close'] > last['ema200_daily'] and last['adx'] > 20 and last['volume'] > 1.2 * last['vol_sma']):
             
             sl = last['close'] - (5.0 * last['atr'])
             tp = last['close'] + ((last['close'] - sl) * 2.0)
             
-            # تشخیص سیگنال فوق‌العاده استثنایی (ADX > 35 و حجم > 1.5 برابر)
             is_exceptional = (last['adx'] > 35) and (last['volume'] > 1.5 * last['vol_sma'])
             
             return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr'], "is_exceptional": is_exceptional}
@@ -93,25 +91,23 @@ def analyze_4h(coin):
 # ================= اجرای اصلی =================
 def run():
     print("شروع اسکن...")
-    status, positions = tt_request("GET", "/futures/positions")
+    status, response = tt_request("GET", "/futures/positions")
     
     open_positions = []
-    if status == 200 and isinstance(positions, list):
-        open_positions = [p for p in positions if p.get('status') == 'OPEN']
+    if status == 200 and isinstance(response, dict):
+        items = response.get('items', [])
+        open_positions = [p for p in items if p.get('status') == 'OPENED']
     
     bot_positions = []
     open_symbols = []
     
-    # جدا کردن پوزیشن‌های ربات از پوزیشن‌های دستی تو
     for pos in open_positions:
         try:
-            size = float(pos.get('size', 0))
-            entry = float(pos.get('entryPrice', 0))
-            lev = float(pos.get('leverage', 1))
-            pos_margin = (size * entry) / lev
+            side = pos.get('side')
+            margin = float(pos.get('initialMargin', 0))
             
-            # مارجین 1، 2 یا 3 دلار یعنی کار رباته
-            if round(pos_margin, 1) in [1.0, 2.0, 3.0]:
+            # فقط پوزیشن‌های LONG که مارجینشون 1، 2 یا 3 دلار هست کار رباته
+            if side == 'LONG' and round(margin, 1) in [1.0, 2.0, 3.0]:
                 bot_positions.append(pos)
                 open_symbols.append(pos['symbol'])
         except:
@@ -127,7 +123,6 @@ def run():
         current_price = float(pos.get('markPrice', 0))
         tp = float(pos.get('takeProfit', 0))
         current_sl = float(pos.get('stopLoss', 0))
-        side = pos.get('side', 'LONG')
         
         r = analyze_4h(coin)
         if not r: continue
@@ -135,16 +130,15 @@ def run():
         new_sl = current_sl
         is_risk_free = False
 
-        if side == 'LONG':
-            if tp > entry and current_sl < entry:
-                halfway = entry + ((tp - entry) / 2)
-                if current_price >= halfway:
-                    new_sl = entry
-                    is_risk_free = True
-                    
-            trailing_sl = current_price - (5.0 * r['atr'])
-            if trailing_sl > new_sl:
-                new_sl = trailing_sl
+        if tp > entry and current_sl < entry:
+            halfway = entry + ((tp - entry) / 2)
+            if current_price >= halfway:
+                new_sl = entry
+                is_risk_free = True
+                
+        trailing_sl = current_price - (5.0 * r['atr'])
+        if trailing_sl > new_sl:
+            new_sl = trailing_sl
                 
         if new_sl != current_sl and new_sl > 0:
             p_status, p_res = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", {"stopLoss": str(round(new_sl, 4))})
@@ -163,7 +157,7 @@ def run():
             
         r = analyze_4h(coin)
         if r:
-            # 🛑 چک کردن محدودیت 3 پوزیشن
+            # چک کردن محدودیت 3 پوزیشن
             if len(bot_positions) >= 3:
                 if not r['is_exceptional']:
                     print(f"سیگنال {coin} رد شد. چون ربات ۳ پوزیشن باز دارد و این سیگنال فوق‌العاده نیست.")
@@ -171,7 +165,6 @@ def run():
                 else:
                     print(f"⚠️ استثنا! سیگنال {coin} با وجود ۳ پوزیشن باز، باز می‌شود چون فوق‌العاده قوی است.")
 
-            # مدیریت سرمایه ثابت
             if r['adx'] > 35: margin = 3.0
             elif r['adx'] > 25: margin = 2.0
             else: margin = 1.0
@@ -185,7 +178,8 @@ def run():
             if o_status in [200, 201]:
                 send_telegram(f"🚀 <b>پوزیشن جدید باز شد</b> 🚀\n🪙 {coin} | مارجین: {margin}$\n🎯 TP2: {r['tp']:.4f}\n🛑 SL: {r['sl']:.4f}\n📊 ADX: {r['adx']:.1f}")
                 found_count += 1
-                bot_positions.append({"symbol": symbol}) # اضافه کردن به لیست برای چک کردن در همین اجرا
+                bot_positions.append({"symbol": symbol})
+                open_symbols.append(symbol)
             else:
                 print(f"خطا در {coin}: {o_res}")
         time.sleep(0.5)
