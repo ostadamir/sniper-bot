@@ -2,7 +2,7 @@ name: Paper Trading Bot (300$)
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # هر 30 دقیقه
+    - cron: '*/30 * * * *' # هر ۳۰ دقیقه
   workflow_dispatch:
 
 jobs:
