@@ -16,14 +16,15 @@ UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "LINK",
 ex = ccxt.kucoin()
 
 START_BALANCE = 300.0
-RISK = 0.01             # risk per trade (fraction of equity)
-MAX_POS = 3             # max simultaneous positions
-ATR_MULT = 3.0          # trailing stop distance in daily ATRs
-FEE = 0.001             # fee per side
-SLIP = 0.0005           # slippage per side
-MAX_CHASE = 0.03        # skip if price is 3% above the signal close
+RISK = 0.01
+MAX_POS = 3
+ATR_MULT = 3.0
+FEE = 0.001
+SLIP = 0.0005
+MAX_CHASE = 0.03
 MIN_NOTIONAL = 10.0
 DAY = 86400000
+HEARTBEAT_HOURS = 4  # 👈 گزارش هر ۴ ساعت
 COLS = ["ms", "open", "high", "low", "close", "volume"]
 
 
@@ -161,6 +162,7 @@ def manage_positions(state, errors):
 
 
 def try_open(state, errors):
+    """برمی‌گردونه: (تعداد سیگنال پیدا شده, تعداد پوزیشن باز شده)"""
     open_syms = {p["symbol"] for p in state["positions"]}
     cands = []
     for coin in UNIVERSE:
@@ -180,6 +182,8 @@ def try_open(state, errors):
         cands.append(r)
     cands.sort(key=lambda r: r["strength"], reverse=True)
 
+    signals_found = len(cands)
+    opened_count = 0
     skips = []
     for r in cands:
         sym = r["symbol"]
@@ -213,6 +217,7 @@ def try_open(state, errors):
             "time": now_utc().strftime("%Y-%m-%d %H:%M")})
         state["balance"] -= notional + fee_entry
         state["signals"][sym] = r["candle_ms"]
+        opened_count += 1
         risk_usd = notional * stop_dist
         send(f"🟢 <b>PAPER BUY</b> · {sym}\n"
              f"<pre>Entry    {fmt(entry)}\n"
@@ -222,6 +227,7 @@ def try_open(state, errors):
              f"Balance  {state['balance']:.2f}$</pre>")
     if skips:
         send("⏭ <b>Signals skipped</b>\n<pre>" + "\n".join(skips) + "</pre>")
+    return signals_found, opened_count
 
 
 def stats(hist):
@@ -233,11 +239,21 @@ def stats(hist):
     return wr, pf
 
 
-def heartbeat(state):
-    today = now_utc().strftime("%Y-%m-%d")
-    if state["last_heartbeat"] == today:
-        return
-    state["last_heartbeat"] = today
+def heartbeat(state, signals_found_this_run):
+    """گزارش هر ۴ ساعت یکبار"""
+    now = now_utc()
+    last = state.get("last_heartbeat", "")
+    if last:
+        try:
+            last_dt = dt.datetime.fromisoformat(last)
+            elapsed = (now - last_dt).total_seconds()
+            if elapsed < HEARTBEAT_HOURS * 3600 - 120:
+                return
+        except Exception:
+            pass
+
+    state["last_heartbeat"] = now.isoformat()
+
     unreal, lines = 0.0, []
     for p in state["positions"]:
         live = live_price(p["symbol"], p["entry"])
@@ -247,17 +263,25 @@ def heartbeat(state):
     invested = sum(p["invested"] for p in state["positions"])
     equity = state["balance"] + invested + unreal
     wr, pf = stats(state["history"])
-    text = (f"📊 <b>Daily status</b>\n"
+
+    # 📊 وضعیت اسکن در این دوره
+    if signals_found_this_run > 0:
+        scan_status = f"✅ {signals_found_this_run} سیگنال جدید پیدا شد"
+    else:
+        scan_status = "ℹ️ هیچ سیگنال جدیدی در این دوره نبود"
+
+    text = (f"⏰ <b>گزارش ۴ ساعته</b>\n"
             f"<pre>Equity   {equity:.2f}$\n"
             f"Free     {state['balance']:.2f}$\n"
             f"Open     {len(state['positions'])}\n"
             f"Trades   {len(state['history'])}\n"
             f"Winrate  {wr}\n"
-            f"ProfitF  {pf}</pre>")
+            f"ProfitF  {pf}</pre>\n"
+            f"<b>اسکن اخیر:</b> {scan_status}")
     if lines:
         text += "\n<pre>" + "\n".join(lines) + "</pre>"
     else:
-        text += "\n<i>No open positions. No signal right now.</i>"
+        text += "\n<i>هیچ پوزیشن بازی در حال حاضر وجود ندارد.</i>"
     send(text)
 
 
@@ -270,9 +294,10 @@ def startup_message():
          f"Max pos   {MAX_POS}\n"
          "Leverage  none (1x)\n"
          f"Coins     {len(UNIVERSE)}\n"
-         "Checks    every 4 hours</pre>\n"
+         "Checks    every 30 minutes\n"
+         "Reports   every 4 hours</pre>\n"
          "I will message you on every buy, sell, skipped signal, "
-         "error and once a day with a status.")
+         "error, and every 4 hours with a status report.")
 
 
 def notify_errors(state, errors):
@@ -293,12 +318,11 @@ def run():
     if not state["started"]:
         startup_message()
         state["started"] = True
-        state["last_heartbeat"] = now_utc().strftime("%Y-%m-%d")
     try:
         manage_positions(state, errors)
-        try_open(state, errors)
-        if state["last_heartbeat"] != now_utc().strftime("%Y-%m-%d"):
-            heartbeat(state)
+        signals_found, opened_count = try_open(state, errors)
+        print(f"signals found: {signals_found}, opened: {opened_count}")
+        heartbeat(state, signals_found)
     except Exception as e:
         send(f"⚠️ <b>Unexpected error</b>\n"
              f"<pre>{type(e).__name__}: {str(e)[:150]}</pre>")
