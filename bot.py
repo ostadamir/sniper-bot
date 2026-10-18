@@ -1,14 +1,12 @@
-import time, os, requests, ccxt, hmac, hashlib, json
+import time, os, requests, ccxt, json
 import numpy as np, pandas as pd
+import datetime
 
 # ================= تنظیمات =================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-TRUETRADE_KEY = "KnEDfEai0PDBh36LbXWWptvYru2tPTYbSEMvBcbH"
-TRUETRADE_SECRET = "4605eb72c3b418ce5ca129aa75a4ec6e7aa21bcb76a537068b7195288aa2dcb8"
-TRUETRADE_URL = "https://apiv2.thetruetrade.io"
-
+STATE_FILE = "paper_state.json"
 UNIVERSE = ["ETH", "BNB", "NEAR", "AVAX", "LINK", "ICP", "TRX", "DOGE", "BTC", "UNI"]
 ex = ccxt.kucoin()
 
@@ -18,25 +16,16 @@ def send_telegram(text):
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
     except: pass
 
-# ================= توابع ترو ترید =================
-def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
-    payload = f"{timestamp}{method.upper()}{uri}"
-    return hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
+# ================= توابع مدیریت State =================
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    return {"balance": 300.0, "positions": []}
 
-def tt_request(method, uri, payload=None):
-    timestamp = str(int(time.time() * 1000))
-    signature = tt_sign(TRUETRADE_SECRET, timestamp, method, uri)
-    headers = {"X-API-Key": TRUETRADE_KEY, "X-Timestamp": timestamp, "X-Signature": signature, "Content-Type": "application/json"}
-    try:
-        if method == "GET":
-            res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
-        elif method == "POST":
-            res = requests.post(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=15)
-        elif method == "PATCH":
-            res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=15)
-        return res.status_code, res.json() if res.text else {}
-    except Exception as e:
-        return 500, str(e)
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=4)
 
 # ================= محاسبات استراتژی =================
 def calc_ema(series, period): return series.ewm(span=period, adjust=False).mean()
@@ -60,123 +49,136 @@ def fetch(coin, tf, limit=600):
     h['time'] = pd.to_datetime(h['time'], unit='ms')
     return h
 
-def analyze_4h(coin):
+def analyze_daily(coin):
     try:
-        h = fetch(coin, "4h")
-        h_1d = fetch(coin, "1d", 300)
-        h_1d['ema200_daily'] = calc_ema(h_1d['close'], 200)
-        h_merged = pd.merge_asof(h, h_1d[['time', 'ema200_daily']], on='time', direction='backward')
-        h_merged['ema200'] = calc_ema(h_merged['close'], 200)
-        h_merged['adx'] = calc_adx(h_merged['high'], h_merged['low'], h_merged['close'], 14)
-        h_merged['atr'] = calc_atr(h_merged['high'], h_merged['low'], h_merged['close'], 14)
-        h_merged['vol_sma'] = h_merged['volume'].rolling(window=20).mean()
-        h_merged['hh'] = h_merged['high'].rolling(window=55).max().shift(1)
+        h = fetch(coin, "1d", 500) 
         
-        h_calc = h_merged.iloc[:-1].dropna().reset_index(drop=True)
+        h['ema200'] = calc_ema(h['close'], 200)
+        h['adx'] = calc_adx(h['high'], h['low'], h['close'], 14)
+        h['atr'] = calc_atr(h['high'], h['low'], h['close'], 14)
+        h['vol_sma'] = h['volume'].rolling(window=20).mean()
+        h['hh55'] = h['high'].rolling(window=55).max().shift(1)
+        h['ll55'] = h['low'].rolling(window=55).min().shift(1)
         
+        h_calc = h.iloc[:-1].dropna().reset_index(drop=True) 
         if len(h_calc) < 10: return None
         last = h_calc.iloc[-1]
         
-        if (last['close'] > last['hh'] and last['close'] > last['ema200'] and 
-            last['close'] > last['ema200_daily'] and last['adx'] > 20 and last['volume'] > 1.2 * last['vol_sma']):
+        vol_ratio = last['volume'] / last['vol_sma']
+        
+        if (last['close'] > last['hh55'] and last['close'] > last['ema200'] and 
+            last['adx'] > 25 and vol_ratio > 1.5):
             
-            sl = last['close'] - (5.0 * last['atr'])
-            tp = last['close'] + ((last['close'] - sl) * 2.0)
-            is_exceptional = (last['adx'] > 35) and (last['volume'] > 1.5 * last['vol_sma'])
+            swing_range = last['hh55'] - last['ll55']
+            if swing_range <= 0: return None
             
-            return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr'], "is_exceptional": is_exceptional}
+            sl = last['hh55'] - (swing_range * 0.618)
+            tp = last['hh55'] + (swing_range * 1.618)
+            
+            if last['close'] <= sl: return None
+            
+            # تعیین کیفیت سیگنال
+            if last['adx'] > 35 and vol_ratio > 2.0:
+                quality = "🌟 عالی"
+                margin_pct = 0.03 # 3%
+            elif last['adx'] > 30 and vol_ratio > 1.8:
+                quality = "🔥 خیلی خوب"
+                margin_pct = 0.02 # 2%
+            else:
+                quality = "✅ خوب"
+                margin_pct = 0.01 # 1%
+                
+            return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr'], "quality": quality, "margin_pct": margin_pct}
         return None
     except: return None
 
 # ================= اجرای اصلی =================
 def run():
-    print("شروع اسکن...")
-    status, response = tt_request("GET", "/futures/positions")
+    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] شروع اسکن Paper Trading (300$)...")
+    state = load_state()
     
-    open_positions = []
-    if status == 200 and isinstance(response, dict):
-        items = response.get('items', [])
-        open_positions = [p for p in items if p.get('status') == 'OPENED']
+    # محاسبه کل سرمایه (Equity = Free Balance + Locked Margin)
+    total_equity = state['balance'] + sum(p['margin'] for p in state['positions'] if not p.get('closed'))
     
-    bot_positions = []
-    open_symbols = []
-    
-    for pos in open_positions:
-        try:
-            side = pos.get('side')
-            margin = float(pos.get('initialMargin', 0))
-            lev = float(pos.get('leverage', 1))
-            coin = pos['symbol'].replace("USDT", "")
-            
-            if side == 'LONG' and round(margin, 1) in [1.0, 2.0, 3.0] and lev == 10 and coin in UNIVERSE:
-                bot_positions.append(pos)
-                open_symbols.append(pos['symbol'])
-        except: continue
-
-    print(f"تعداد پوزیشن‌های فعال ربات: {len(bot_positions)}")
-    
-    # 1. مدیریت پوزیشن‌ها (ریسک‌فری و تریلینگ) - این بخش هر 30 دقیقه اجرا میشه
-    for pos in bot_positions:
-        symbol = pos['symbol']
-        coin = symbol.replace("USDT", "")
-        entry = float(pos.get('entryPrice', 0))
-        current_price = float(pos.get('markPrice', 0))
-        tp = float(pos.get('takeProfit', 0))
-        current_sl = float(pos.get('stopLoss', 0))
+    # 1. مدیریت پوزیشن‌های فیک باز
+    for pos in state['positions'][:]:
+        if pos.get('closed'): continue
         
-        r = analyze_4h(coin)
-        if not r: continue
-
-        new_sl = current_sl
-        is_risk_free = False
-
-        if tp > entry and current_sl < entry:
-            halfway = entry + ((tp - entry) / 2)
-            if current_price >= halfway:
-                new_sl = entry
-                is_risk_free = True
-                
-        trailing_sl = current_price - (5.0 * r['atr'])
-        if trailing_sl > new_sl:
-            new_sl = trailing_sl
-                
-        if new_sl != current_sl and new_sl > 0:
-            p_status, p_res = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", {"stopLoss": str(round(new_sl, 4))})
-            if p_status in [200, 201]:
-                if is_risk_free and new_sl == entry:
-                    send_telegram(f"🛡 <b>پوزیشن ریسک‌فری شد!</b>\nارز: #{coin}\nحد ضرر به نقطه ورود ({entry:.4f}) منتقل شد.")
-                else:
-                    send_telegram(f"🔄 <b>آپدیت حد ضرر (Trailing)</b>\nارز: #{coin}\nحد ضرر جدید: {new_sl:.4f}")
-
-    # 2. باز کردن پوزیشن‌های جدید (اگر سیگنالی بود)
-    found_count = 0
-    for coin in UNIVERSE:
-        symbol = f"{coin}USDT"
-        if symbol in open_symbols: continue
-            
-        r = analyze_4h(coin)
-        if r:
-            if len(bot_positions) >= 3 and not r['is_exceptional']:
-                continue
-
-            if r['adx'] > 35: margin = 3.0
-            elif r['adx'] > 25: margin = 2.0
-            else: margin = 1.0
-            
-            payload = {
-                "symbol": symbol, "side": "LONG", "tradeType": "MARKET", "leverage": 10,
-                "cost": str(margin), "takeProfit": str(round(r['tp'], 4)), "stopLoss": str(round(r['sl'], 4)), "walletType": "debit"
-            }
-            o_status, o_res = tt_request("POST", "/futures/positions", payload)
-            
-            if o_status in [200, 201]:
-                send_telegram(f"🚀 <b>پوزیشن جدید باز شد</b> 🚀\n🪙 {coin} | مارجین: {margin}$\n🎯 TP2: {r['tp']:.4f}\n🛑 SL: {r['sl']:.4f}\n📊 ADX: {r['adx']:.1f}")
-                found_count += 1
-                bot_positions.append({"symbol": symbol})
-                open_symbols.append(symbol)
-        time.sleep(0.5)
+        h = fetch(pos['symbol'], "1d", 10)
+        if h.empty: continue
+        current_candle = h.iloc[-2] # کندل بسته شده امروز
+        current_price = current_candle['close']
         
-    print("اسکن تمام شد.")
+        if current_price > pos['highest']: pos['highest'] = current_price
+        
+        # ریسک فری (1.5 R)
+        if not pos['breakeven'] and current_price >= (pos['entry'] + (pos['initial_risk'] * 1.5)):
+            pos['sl'] = pos['entry']
+            pos['breakeven'] = True
+            
+        # تریلینگ استاپ ۵ ATR
+        trailing_sl = pos['highest'] - (5.0 * pos['atr'])
+        if trailing_sl > pos['sl']: pos['sl'] = trailing_sl
+            
+        exit_price = 0
+        reason = ""
+        
+        if current_candle['low'] <= pos['sl']:
+            exit_price = pos['sl']
+            reason = "Trailing SL" if pos['sl'] > pos['sl_initial'] else "Hard SL"
+            if pos['breakeven'] and pos['sl'] == pos['entry']: reason = "Breakeven"
+        elif current_candle['high'] >= pos['tp']:
+            exit_price = pos['tp']
+            reason = "TP (Fib 1.618)"
+            
+        if exit_price > 0:
+            qty = (pos['margin'] * 10) / pos['entry']
+            pnl = (exit_price - pos['entry']) * qty
+            state['balance'] += pos['margin'] + pnl
+            pos['closed'] = True
+            
+            send_telegram(f"🔴 <b>خروج از پوزیشن (فیک)</b>\n"
+                          f"🪙 {pos['symbol']} | دلیل: {reason}\n"
+                          f"💰 سود/ضرر: ${pnl:.2f}\n"
+                          f"💵 موجودی جدید: ${state['balance']:.2f}")
+
+    # پاک کردن پوزیشن‌های بسته شده
+    state['positions'] = [p for p in state['positions'] if not p.get('closed')]
+    
+    # 2. باز کردن پوزیشن‌های جدید
+    open_symbols = [p['symbol'] for p in state['positions']]
+    
+    if len(open_symbols) < 3:
+        for coin in UNIVERSE:
+            symbol = f"{coin}/USDT"
+            if symbol in open_symbols: continue
+                
+            r = analyze_daily(coin)
+            if r:
+                margin_amount = total_equity * r['margin_pct']
+                margin_amount = max(1.0, round(margin_amount, 2)) # حداقل 1 دلار
+                
+                if state['balance'] < margin_amount:
+                    continue
+                    
+                state['positions'].append({
+                    "symbol": symbol, "entry": r['price'], "sl": r['sl'], "sl_initial": r['sl'],
+                    "tp": r['tp'], "atr": r['atr'], "margin": margin_amount, "highest": r['price'],
+                    "initial_risk": r['price'] - r['sl'], "quality": r['quality'],
+                    "breakeven": False, "closed": False
+                })
+                state['balance'] -= margin_amount
+                
+                send_telegram(f"🟢 <b>پوزیشن جدید باز شد (فیک)</b>\n"
+                              f"🪙 {symbol} | مارجین: ${margin_amount}\n"
+                              f"💎 کیفیت: {r['quality']}\n"
+                              f"🎯 TP: {r['tp']:.4f}\n"
+                              f"🛑 SL: {r['sl']:.4f}\n"
+                              f"💵 موجودی آزاد: ${state['balance']:.2f}")
+                break 
+
+    save_state(state)
+    print("پایان اسکن. فایل state ذخیره شد.")
 
 if __name__ == "__main__":
     run()
