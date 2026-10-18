@@ -1,4 +1,11 @@
 {
-    "balance": 300.0,
-    "positions": []
+  "version": 2,
+  "balance": 300.0,
+  "positions": [],
+  "history": [],
+  "signals": {},
+  "skipped": {},
+  "last_heartbeat": "2026-10-18",
+  "last_error_notice": "",
+  "started": true
 }
