@@ -58,30 +58,30 @@ def fetch(coin, tf, limit=600):
     rows = ex.fetch_ohlcv(coin + "/USDT", tf, limit=limit)
     h = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close", "volume"])
     h['time'] = pd.to_datetime(h['time'], unit='ms')
-    return h.iloc[:-1].reset_index(drop=True)
+    return h
 
 def analyze_4h(coin):
     try:
-        h_tf = fetch(coin, "4h")
+        h = fetch(coin, "4h")
         h_1d = fetch(coin, "1d", 300)
         h_1d['ema200_daily'] = calc_ema(h_1d['close'], 200)
-        h = pd.merge_asof(h_tf, h_1d[['time', 'ema200_daily']], on='time', direction='backward')
-        h['ema200'] = calc_ema(h['close'], 200)
-        h['adx'] = calc_adx(h['high'], h['low'], h['close'], 14)
-        h['atr'] = calc_atr(h['high'], h['low'], h['close'], 14)
-        h['vol_sma'] = h['volume'].rolling(window=20).mean()
-        h['hh'] = h['high'].rolling(window=55).max().shift(1)
-        h = h.dropna().reset_index(drop=True)
+        h_merged = pd.merge_asof(h, h_1d[['time', 'ema200_daily']], on='time', direction='backward')
+        h_merged['ema200'] = calc_ema(h_merged['close'], 200)
+        h_merged['adx'] = calc_adx(h_merged['high'], h_merged['low'], h_merged['close'], 14)
+        h_merged['atr'] = calc_atr(h_merged['high'], h_merged['low'], h_merged['close'], 14)
+        h_merged['vol_sma'] = h_merged['volume'].rolling(window=20).mean()
+        h_merged['hh'] = h_merged['high'].rolling(window=55).max().shift(1)
         
-        if len(h) < 10: return None
-        last = h.iloc[-1]
+        h_calc = h_merged.iloc[:-1].dropna().reset_index(drop=True)
+        
+        if len(h_calc) < 10: return None
+        last = h_calc.iloc[-1]
         
         if (last['close'] > last['hh'] and last['close'] > last['ema200'] and 
             last['close'] > last['ema200_daily'] and last['adx'] > 20 and last['volume'] > 1.2 * last['vol_sma']):
             
             sl = last['close'] - (5.0 * last['atr'])
             tp = last['close'] + ((last['close'] - sl) * 2.0)
-            
             is_exceptional = (last['adx'] > 35) and (last['volume'] > 1.5 * last['vol_sma'])
             
             return {"price": last['close'], "sl": sl, "tp": tp, "adx": last['adx'], "atr": last['atr'], "is_exceptional": is_exceptional}
@@ -108,23 +108,14 @@ def run():
             lev = float(pos.get('leverage', 1))
             coin = pos['symbol'].replace("USDT", "")
             
-            # 🛠 فیلترهای ضدگلوله برای تشخیص پوزیشن‌های ربات:
-            # 1. LONG باشد
-            # 2. مارجین 1، 2 یا 3 دلار باشد
-            # 3. اهرم دقیقا 10 باشد (ربات همیشه 10 میذاره)
-            # 4. ارز حتما جزو 10 ارز VIP باشد (WLD جزو این لیست نیست)
-            is_bot = (side == 'LONG' and round(margin, 1) in [1.0, 2.0, 3.0] 
-                      and lev == 10 and coin in UNIVERSE)
-            
-            if is_bot:
+            if side == 'LONG' and round(margin, 1) in [1.0, 2.0, 3.0] and lev == 10 and coin in UNIVERSE:
                 bot_positions.append(pos)
                 open_symbols.append(pos['symbol'])
-        except:
-            continue
+        except: continue
 
     print(f"تعداد پوزیشن‌های فعال ربات: {len(bot_positions)}")
     
-    # 1. مدیریت پوزیشن‌های ربات (ریسک‌فری و تریلینگ)
+    # 1. مدیریت پوزیشن‌ها (ریسک‌فری و تریلینگ) - این بخش هر 30 دقیقه اجرا میشه
     for pos in bot_positions:
         symbol = pos['symbol']
         coin = symbol.replace("USDT", "")
@@ -157,22 +148,16 @@ def run():
                 else:
                     send_telegram(f"🔄 <b>آپدیت حد ضرر (Trailing)</b>\nارز: #{coin}\nحد ضرر جدید: {new_sl:.4f}")
 
-    # 2. باز کردن پوزیشن‌های جدید با محدودیت 3 عدد
+    # 2. باز کردن پوزیشن‌های جدید (اگر سیگنالی بود)
     found_count = 0
-    
     for coin in UNIVERSE:
         symbol = f"{coin}USDT"
         if symbol in open_symbols: continue
             
         r = analyze_4h(coin)
         if r:
-            # چک کردن محدودیت 3 پوزیشن
-            if len(bot_positions) >= 3:
-                if not r['is_exceptional']:
-                    print(f"سیگنال {coin} رد شد. چون ربات ۳ پوزیشن باز دارد و این سیگنال فوق‌العاده نیست.")
-                    continue
-                else:
-                    print(f"⚠️ استثنا! سیگنال {coin} با وجود ۳ پوزیشن باز، باز می‌شود چون فوق‌العاده قوی است.")
+            if len(bot_positions) >= 3 and not r['is_exceptional']:
+                continue
 
             if r['adx'] > 35: margin = 3.0
             elif r['adx'] > 25: margin = 2.0
@@ -189,12 +174,9 @@ def run():
                 found_count += 1
                 bot_positions.append({"symbol": symbol})
                 open_symbols.append(symbol)
-            else:
-                print(f"خطا در {coin}: {o_res}")
         time.sleep(0.5)
         
-    if found_count == 0:
-        print("اسکن تمام شد. سیگنال جدیدی پیدا نشد یا محدودیت‌ها اجازه ندادند.")
+    print("اسکن تمام شد.")
 
 if __name__ == "__main__":
     run()
