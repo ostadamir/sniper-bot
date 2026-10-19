@@ -63,21 +63,25 @@ def check_telegram(state):
                 state["offset"] = u["update_id"] + 1
                 if "message" in u and "text" in u["message"]:
                     text = u["message"]["text"]
-                    # فرمت: /new TRX SHORT 0.3309 0.3408 0.31998 0.31749 0.31501
+                    # فرمت جدید: /new TRX SHORT 0.3309 0.3408 0.3199 0.3174 0.3150 0.3100 (با 4 تارگت)
                     if text.startswith("/new"):
                         parts = text.split()
-                        if len(parts) == 8:
-                            symbol, side, entry, sl, tp1, tp2, tp3 = parts[1:]
-                            pos_key = f"{symbol.upper()}_{side.upper()}"
+                        if len(parts) == 9: # 8 بخش برای 3 تارگت، 9 بخش برای 4 تارگت
+                            # اصلاح مهم: کلمه USDT رو از اسم ارز حذف میکنیم تا با API هماهنگ باشه
+                            symbol = parts[1].upper().replace("USDT", "") 
+                            side, entry, sl, tp1, tp2, tp3 = parts[2:]
+                            tp4 = parts[8] # تارگت چهارم
+                            
+                            pos_key = f"{symbol}_{side.upper()}"
                             state["targets"][pos_key] = {
                                 "entry": float(entry), "sl": float(sl),
-                                "tp1": float(tp1), "tp2": float(tp2), "tp3": float(tp3),
+                                "tp1": float(tp1), "tp2": float(tp2), "tp3": float(tp3), "tp4": float(tp4),
                                 "risk_free_done": False, "tp1_done": False, 
-                                "half_tp2_done": False, "tp2_done": False, "closed": False
+                                "half_tp2_done": False, "tp2_done": False, "tp3_done": False, "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nورود: {entry}\nاستاپ: {sl}\nTP1: {tp1}\nربات مدیریتش رو شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nورود: {entry}\nاستاپ: {sl}\nTP1: {tp1}\nTP4: {tp4}\nربات مدیریتش رو شروع کرد.")
                         else:
-                            send_telegram("❌ فرمت اشتباهه. نمونه:\n/new TRX SHORT 0.33 0.34 0.32 0.31 0.30")
+                            send_telegram("❌ فرمت اشتباهه. نمونه (با 4 تارگت):\n/new ETH LONG 2403 2331 2482 2500 2518 2536")
     except Exception as e:
         print("TG Error:", e)
 
@@ -108,12 +112,15 @@ def manage_positions(state):
         is_long = (side == "LONG")
         
         entry, sl, tp1, tp2, tp3 = t["entry"], t["sl"], t["tp1"], t["tp2"], t["tp3"]
+        tp4 = t.get("tp4", None) # اگر تارگت 4 وجود نداشت
         
         # نقاط کلیدی
         half_tp1 = (entry + tp1) / 2
         three_quarter_tp1 = (entry + 3 * tp1) / 4
         half_tp2 = (tp1 + tp2) / 2
         three_quarter_tp2 = (tp1 + 3 * tp2) / 4
+        half_tp3 = (tp2 + tp3) / 2
+        three_quarter_tp3 = (tp2 + 3 * tp3) / 4
         
         new_sl, new_tp, reason = current_sl, current_tp, ""
         
@@ -146,6 +153,21 @@ def manage_positions(state):
                 new_tp = tp3
                 t["tp2_done"] = True
                 reason = "سه‌چهارم راه TP2 (استاپ روی نصف راه، تارگت TP3)"
+
+        # 5. نصف راه TP3 (استاپ به TP2)
+        if t["tp2_done"] and not t["tp3_done"]:
+            if (is_long and current_price >= half_tp3) or (not is_long and current_price <= half_tp3):
+                new_sl = tp2
+                t["tp3_done"] = True
+                reason = "نصف راه TP3 (استاپ روی TP2)"
+                
+        # 6. سه‌چهارم راه TP3 (استاپ به نصف راه، تارگت TP4 - اگر وجود داشته باشد)
+        if t["tp3_done"] and tp4 and not t.get("tp4_done", False):
+            if (is_long and current_price >= three_quarter_tp3) or (not is_long and current_price <= three_quarter_tp3):
+                new_sl = half_tp3
+                new_tp = tp4
+                t["tp4_done"] = True
+                reason = "سه‌چهارم راه TP3 (استاپ روی نصف راه، تارگت TP4)"
 
         # اجرای تغییرات
         if reason:
