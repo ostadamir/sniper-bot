@@ -86,12 +86,13 @@ def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
     
-    open_positions = response.get("items", [])
+    items = response.get("items", [])
+    open_positions = [p for p in items if p.get("status") == "OPENED"]
+    closed_positions = [p for p in items if p.get("status") == "CLOSED"]
+    
     open_keys = set()
     
     for pos in open_positions:
-        if pos.get("status") != "OPENED": continue
-        
         symbol = pos["symbol"].replace("USDT", "")
         side = pos["side"]
         pos_key = f"{symbol}_{side}"
@@ -157,11 +158,41 @@ def manage_positions(state):
                 if p_status in [200, 201]:
                     send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ جدید: {new_sl}\nتارگت جدید: {new_tp}")
 
-    # 5. پاکسازی پوزیشن‌های بسته شده (اگر ربات دیر رسید)
+    # 5. پاکسازی و گزارش سود/ضرر پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
-            send_telegram(f"🏁 پوزیشن {key} بسته شد (TP/SL خورد یا دستی بسته شد). از لیست خارج شد.")
+            
+            # پیدا کردن اطلاعات بسته شدن از لیست ترودید
+            symbol = key.split("_")[0] + "USDT"
+            side = key.split("_")[1]
+            
+            matching_closed = [p for p in closed_positions if p["symbol"] == symbol and p["side"] == side]
+            
+            pnl_text = "نامشخص"
+            reason_text = "نامشخص"
+            
+            if matching_closed:
+                # مرتب سازی بر اساس زمان آپدیت (جدیدترین اول)
+                matching_closed.sort(key=lambda x: x.get("updatedAt", ""), reverse=True)
+                last_closed = matching_closed[0]
+                
+                realized_pnl = float(last_closed.get("realizedPnL", 0))
+                closing_reason = last_closed.get("closingReason", "")
+                
+                pnl_text = f"{realized_pnl:+.2f} USDT"
+                
+                reasons = {
+                    "STOPLOSS": "حد ضرر (Stop Loss)",
+                    "TAKEPROFIT": "حد سود (Take Profit)",
+                    "MANUAL": "دستی (Manual)"
+                }
+                reason_text = reasons.get(closing_reason, closing_reason)
+                
+            send_telegram(f"🏁 <b>پوزیشن {key} بسته شد</b>\n"
+                          f"دلیل: {reason_text}\n"
+                          f"سود/ضرر: {pnl_text}\n"
+                          f"از لیست خارج شد.")
 
 def run():
     print("Checking...")
