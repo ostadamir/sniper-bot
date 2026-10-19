@@ -23,7 +23,35 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "closed": false
+        },
+        "ETH_LONG": {
+            "entry": 2403.2,
+            "sl": 2331.1,
+            "tp1": 2482.5,
+            "tp2": 2500.6,
+            "tp3": 2518.6,
+            "tp4": 2536.6,
+            "risk_free_done": false,
+            "tp1_done": false,
+            "half_tp2_done": false,
+            "tp2_done": false,
+            "tp3_done": false,
+            "closed": false
+        },
+        "ETH_SHORT": {
+            "entry": 2402.7,
+            "sl": 2474.8,
+            "tp1": 2323.4,
+            "tp2": 2305.4,
+            "tp3": 2287.4,
+            "tp4": 2269.4,
+            "risk_free_done": false,
+            "tp1_done": false,
+            "half_tp2_done": false,
+            "tp2_done": false,
+            "tp3_done": false,
+            "closed": false
         }
     },
-    "offset": 209535389
+    "offset": 209535391
 }
