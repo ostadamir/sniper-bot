@@ -1,8 +1,8 @@
-name: Paper Trading Bot (300$)
+name: Risk Manager Bot
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # هر ۳۰ دقیقه
+    - cron: '*/30 * * * *' # هر 30 دقیقه
   workflow_dispatch:
 
 jobs:
@@ -20,18 +20,20 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install ccxt pandas numpy requests
+        run: pip install requests
 
-      - name: Run Paper Bot
+      - name: Run Manager Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
+          TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
         run: python bot.py
 
       - name: Commit and Push State
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add paper_state.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update paper state [skip ci]"
+          git add manager_state.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update manager state [skip ci]"
           git push
