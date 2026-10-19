@@ -11,7 +11,19 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "closed": false
+        },
+        "LINK_SHORT": {
+            "entry": 11.896,
+            "sl": 12.2529,
+            "tp1": 11.5034,
+            "tp2": 11.4142,
+            "tp3": 11.325,
+            "risk_free_done": false,
+            "tp1_done": false,
+            "half_tp2_done": false,
+            "tp2_done": false,
+            "closed": false
         }
     },
-    "offset": 209535388
+    "offset": 209535389
 }
