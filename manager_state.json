@@ -66,20 +66,6 @@
             "tp3_done": false,
             "closed": false
         },
-        "DOGE_LONG": {
-            "entry": 0.07873,
-            "sl": 0.0701,
-            "tp1": 0.08644,
-            "tp2": 0.09529,
-            "tp3": 0.1039,
-            "tp4": 0.11328,
-            "risk_free_done": false,
-            "tp1_done": false,
-            "half_tp2_done": false,
-            "tp2_done": false,
-            "tp3_done": false,
-            "closed": false
-        },
         "BTC_SHORT": {
             "entry": 81572.4,
             "sl": 83254.4,
@@ -95,5 +81,5 @@
             "closed": true
         }
     },
-    "offset": 209535395
+    "offset": 209535396
 }
