@@ -10,7 +10,7 @@
             "tp1_done": false,
             "half_tp2_done": false,
             "tp2_done": false,
-            "closed": false
+            "closed": true
         },
         "LINK_SHORT": {
             "entry": 11.896,
@@ -22,7 +22,7 @@
             "tp1_done": false,
             "half_tp2_done": false,
             "tp2_done": false,
-            "closed": false
+            "closed": true
         },
         "ETH_LONG": {
             "entry": 2403.2,
@@ -50,7 +50,7 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": false
+            "closed": true
         },
         "XLM_LONG": {
             "entry": 0.17668,
@@ -92,7 +92,7 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": false
+            "closed": true
         }
     },
     "offset": 209535395
