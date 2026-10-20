@@ -51,7 +51,35 @@
             "tp2_done": false,
             "tp3_done": false,
             "closed": false
+        },
+        "XLM_LONG": {
+            "entry": 0.17668,
+            "sl": 0.17486,
+            "tp1": 0.17982,
+            "tp2": 0.18248,
+            "tp3": 0.18509,
+            "tp4": 0.18793,
+            "risk_free_done": false,
+            "tp1_done": false,
+            "half_tp2_done": false,
+            "tp2_done": false,
+            "tp3_done": false,
+            "closed": false
+        },
+        "DOGE_LONG": {
+            "entry": 0.07873,
+            "sl": 0.0701,
+            "tp1": 0.08644,
+            "tp2": 0.09529,
+            "tp3": 0.1039,
+            "tp4": 0.11328,
+            "risk_free_done": false,
+            "tp1_done": false,
+            "half_tp2_done": false,
+            "tp2_done": false,
+            "tp3_done": false,
+            "closed": false
         }
     },
-    "offset": 209535391
+    "offset": 209535393
 }
