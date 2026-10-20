@@ -64,7 +64,7 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": false
+            "closed": true
         },
         "BTC_SHORT": {
             "entry": 81572.4,
