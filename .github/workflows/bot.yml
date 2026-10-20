@@ -2,7 +2,7 @@ name: Risk Manager Bot
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # هر 30 دقیقه
+    - cron: '*/12 * * * *' # هر 30 دقیقه
   workflow_dispatch:
 
 jobs:
