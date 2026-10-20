@@ -36,15 +36,15 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": false
+            "closed": true
         },
         "ETH_SHORT": {
-            "entry": 2402.7,
-            "sl": 2474.8,
-            "tp1": 2323.4,
-            "tp2": 2305.4,
-            "tp3": 2287.4,
-            "tp4": 2269.4,
+            "entry": 2382.0,
+            "sl": 2457.3,
+            "tp1": 2307.0,
+            "tp2": 2289.1,
+            "tp3": 2271.2,
+            "tp4": 2253.3,
             "risk_free_done": false,
             "tp1_done": false,
             "half_tp2_done": false,
@@ -79,7 +79,21 @@
             "tp2_done": false,
             "tp3_done": false,
             "closed": false
+        },
+        "BTC_SHORT": {
+            "entry": 81572.4,
+            "sl": 83254.4,
+            "tp1": 79826.3,
+            "tp2": 79214.2,
+            "tp3": 78602.0,
+            "tp4": 77989.8,
+            "risk_free_done": false,
+            "tp1_done": false,
+            "half_tp2_done": false,
+            "tp2_done": false,
+            "tp3_done": false,
+            "closed": false
         }
     },
-    "offset": 209535393
+    "offset": 209535395
 }
