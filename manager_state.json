@@ -93,14 +93,9 @@
             "tp2": 104.09,
             "tp3": 108.58,
             "tp4": 113.51,
-            "risk_free_done": true,
-            "tp1_done": false,
-            "half_tp2_done": false,
-            "tp2_done": false,
-            "tp3_done": false,
-            "closed": false,
-            "current_stage": 0
+            "current_stage": 0,
+            "closed": false
         }
     },
-    "offset": 209535399
+    "offset": 209535400
 }
