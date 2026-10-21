@@ -59,6 +59,10 @@ def check_telegram(state):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         r = requests.get(url, params={"offset": offset, "timeout": 5}, timeout=10).json()
+        
+        # 🌟 این خط برای دیباگ اضافه شد تا ببینیم تلگرام چی جواب میده
+        print("Telegram Response:", r)
+        
         if r.get("ok"):
             for u in r.get("result", []):
                 state["offset"] = u["update_id"] + 1
@@ -116,11 +120,8 @@ def manage_positions(state):
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
         
-        # 🌟 جادوی جدید: خواندن قیمت ورود واقعی از صرافی
+        # 🌟 خواندن قیمت ورود واقعی از صرافی
         exchange_entry = float(pos.get("entryPrice") or 0)
-        
-        # اگه صرافی قیمت ورود رو داد و با اون چیزی که تو کامند دادی فرق داشت،
-        # اون رو جایگزین می‌کنیم تا محاسبات دقیق بشه
         if exchange_entry > 0:
             t["entry"] = exchange_entry
             
@@ -230,7 +231,7 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # 🌟 اجرای تغییرات
+        # 🌟 اجرای تغییرات (همیشه هم SL و هم TP فرستاده میشن تا هیچی پاک نشه)
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
