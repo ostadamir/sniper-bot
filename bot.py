@@ -41,7 +41,12 @@ def load_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
-                return json.load(f)
+                state = json.load(f)
+                # 🌟 اصلاح باگ: اضافه کردن current_stage به پوزیشن‌های قدیمی
+                for key, t in state.get("targets", {}).items():
+                    t.setdefault("current_stage", 0)
+                    t.setdefault("closed", False)
+                return state
         except: pass
     return {"targets": {}, "offset": 0}
 
@@ -108,7 +113,6 @@ def manage_positions(state):
         t = state["targets"][pos_key]
         if t.get("closed", False): continue
         
-        # 🌟 استفاده از (or 0) برای جلوگیری از کرش کردن اگر صرافی مقداری برنگرداند
         current_price = float(pos.get("markPrice") or 0)
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
@@ -117,14 +121,13 @@ def manage_positions(state):
         entry, sl, tp1 = t["entry"], t["sl"], t["tp1"]
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         
-        # 🌟🌟🌟 بخش جدید: اصلاح تی‌پی دستی شما 🌟🌟🌟
-        # اگر تی‌پی صرافی با تارگت نهایی ربات (TP4) فرق داشت، اون رو اصلاح کن
+        # 🌟 بخش اصلاح تی‌پی دستی شما
         if abs(current_tp - tp4) > 0.00001:
             payload_fix = {"takeProfit": str(round(tp4, 6))}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload_fix)
             if fix_status in [200, 201]:
                 send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی شد. ربات آن را به تارگت نهایی ({tp4}) تغییر داد تا مدیریت پله‌ای به هم نریزد.")
-                current_tp = tp4 # آپدیت متغیر برای ادامه محاسبات
+                current_tp = tp4
 
         # --- محاسبات درصدی ---
         dist_to_tp1 = abs(tp1 - entry)
@@ -135,21 +138,21 @@ def manage_positions(state):
         new_sl, new_tp, reason = current_sl, current_tp, ""
         
         # مرحله 0: ۵۰ درصد راه -> ریسک فری
-        if t["current_stage"] == 0:
+        if t.get("current_stage", 0) == 0:
             if (is_long and current_price >= half_tp1) or (not is_long and current_price <= half_tp1):
                 new_sl = entry
                 t["current_stage"] = 1
                 reason = "ریسک‌فری (استاپ روی نقطه ورود)"
 
         # مرحله 1: ۸۰ درصد راه -> استاپ روی ۴۰ درصد
-        elif t["current_stage"] == 1:
+        elif t.get("current_stage", 0) == 1:
             if (is_long and current_price >= trigger_80) or (not is_long and current_price <= trigger_80):
                 new_sl = sl_40
                 t["current_stage"] = 2
                 reason = "رسیدن به 80% راه TP1 (استاپ روی 40% راه)"
 
         # مرحله 2: رسیدن به TP1
-        elif t["current_stage"] == 2:
+        elif t.get("current_stage", 0) == 2:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 new_sl = trigger_80
                 new_tp = tp2
@@ -157,7 +160,7 @@ def manage_positions(state):
                 reason = "رسیدن به TP1 (استاپ روی 80% راه، تارگت TP2)"
 
         # مرحله 3: رسیدن به TP2
-        elif t["current_stage"] == 3:
+        elif t.get("current_stage", 0) == 3:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = tp1
                 new_tp = tp3
@@ -165,7 +168,7 @@ def manage_positions(state):
                 reason = "رسیدن به TP2 (استاپ روی TP1، تارگت TP3)"
 
         # مرحله 4: رسیدن به TP3
-        elif t["current_stage"] == 4:
+        elif t.get("current_stage", 0) == 4:
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = tp2
                 new_tp = tp4
@@ -173,7 +176,7 @@ def manage_positions(state):
                 reason = "رسیدن به TP3 (استاپ روی TP2، تارگت TP4)"
 
         # مرحله 5: رسیدن به TP4 (تمدید تارگت)
-        elif t["current_stage"] == 5:
+        elif t.get("current_stage", 0) == 5:
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
                 dist_tp3_tp4 = abs(tp4 - tp3)
                 extended_tp = tp4 + dist_tp3_tp4 if is_long else tp4 - dist_tp3_tp4
@@ -182,21 +185,21 @@ def manage_positions(state):
                 new_tp = extended_tp
                 
                 t["current_stage"] = 6
-                t["tp4"] = extended_tp # آپدیت تارگت نهایی در حافظه
+                t["tp4"] = extended_tp
                 reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {extended_tp:.4f}"
 
         # مرحله 6: تمدیدهای بعدی
-        elif t["current_stage"] >= 6:
+        elif t.get("current_stage", 0) >= 6:
             if (is_long and current_price >= new_tp) or (not is_long and current_price <= new_tp):
                 dist_tp3_tp4 = abs(tp4 - tp3)
                 extended_tp = new_tp + dist_tp3_tp4 if is_long else new_tp - dist_tp3_tp4
                 
                 new_sl = current_tp
                 new_tp = extended_tp
-                t["tp4"] = extended_tp # آپدیت تارگت نهایی در حافظه
+                t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # اجرای تغییرات در صرافی (برای استاپ و تارگت‌های مراحل)
+        # اجرای تغییرات در صرافی
         if reason:
             payload = {}
             if abs(new_sl - current_sl) > 0.00001: payload["stopLoss"] = str(round(new_sl, 6))
