@@ -1,11 +1,13 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ================= تنظیمات (هاردکد شده) =================
+# ================= تنظیمات =================
 TELEGRAM_TOKEN = "8865889106:AAFBVDLcTCn1kpvbzI_N6AoJd80VMXFI5zY"
 TELEGRAM_CHAT_ID = "7702136864"
-TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
-TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
+
+# 🚨 کلیدهای صرافی ترودید
+TRUETRADE_KEY = "VHezc6KrbqcHTlNzVRK3I0rCysxjYnyFJDw-n5pQ"
+TRUETRADE_SECRET = "b496b58d14853b92219845c699b8f64367207251c2960a1e4866dd0bcb7005b3"
 
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
@@ -23,7 +25,10 @@ def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
     return hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
 
 def tt_request(method, uri, payload=None):
-    if not TRUETRADE_KEY or not TRUETRADE_SECRET: return 500, {}
+    if not TRUETRADE_KEY or not TRUETRADE_SECRET:
+        print("🚨 ERROR: TrueTrade API Keys are missing!")
+        return 500, {}
+        
     timestamp = str(int(time.time() * 1000))
     signature = tt_sign(TRUETRADE_SECRET, timestamp, method, uri)
     headers = {"X-API-Key": TRUETRADE_KEY, "X-Timestamp": timestamp, "X-Signature": signature, "Content-Type": "application/json"}
@@ -33,7 +38,6 @@ def tt_request(method, uri, payload=None):
         elif method == "PATCH":
             res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
         
-        # 🌟 چاپ لاگ برای دیباگ صرافی
         print(f"TT API [{method}] {uri} -> Status: {res.status_code}")
         if res.status_code not in [200, 201]:
             print(f"TT API Error Response: {res.text}")
@@ -105,13 +109,12 @@ def check_telegram(state):
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): 
-        print("Failed to get positions from TrueTrade.")
+        print("Failed to get positions from TrueTrade. Check API keys or IP whitelist.")
         return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     
-    # 🌟 چاپ لاگ برای اینکه ببینیم چند تا پوزیشن باز پیدا کرد
     print(f"Found {len(open_positions)} open positions on exchange.")
     
     open_keys = set()
@@ -139,9 +142,8 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        print(f"Checking {pos_key} | Current Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
+        print(f"Checking {pos_key} | Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
 
-        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             print(f"SL is 0. Fixing to {sl}...")
@@ -149,7 +151,6 @@ def manage_positions(state):
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
-        # 🌟 سیستم همگام‌سازی جدید
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
             print(f"Syncing SL: Exchange {current_sl} != Command {sl}...")
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
@@ -158,7 +159,6 @@ def manage_positions(state):
                 send_telegram(f"🔄 <b>همگام‌سازی {pos_key}</b>\nاستاپ لاس جدید ({sl}) از کامند شما اعمال شد.")
             current_sl = sl
 
-        # 🛡️ سیستم دفاعی 2: اصلاح تی‌پی دستی
         if abs(current_tp - tp4) > 0.00001:
             print(f"Fixing TP: Exchange {current_tp} != Command {tp4}...")
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
@@ -181,7 +181,6 @@ def manage_positions(state):
         
         new_sl, new_tp, reason = current_sl, tp4, "" 
         
-        # --- منطق پله‌ای 9 مرحله‌ای ---
         if t.get("current_stage", 0) == 0:
             if (is_long and current_price >= half_1) or (not is_long and current_price <= half_1):
                 new_sl = entry
@@ -252,7 +251,6 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # 🌟 اجرای تغییرات
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
