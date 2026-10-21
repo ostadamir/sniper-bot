@@ -1,7 +1,7 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ================= تنظیمات (هاردکد شده برای تست) =================
+# ================= تنظیمات (هاردکد شده) =================
 TELEGRAM_TOKEN = "8865889106:AAFBVDLcTCn1kpvbzI_N6AoJd80VMXFI5zY"
 TELEGRAM_CHAT_ID = "7702136864"
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
@@ -60,7 +60,6 @@ def check_telegram(state):
     try:
         r = requests.get(url, params={"offset": offset, "timeout": 5}, timeout=10).json()
         
-        # چاپ لاگ برای اینکه ببینیم چی میشه
         print("Telegram Response:", r)
         
         if r.get("ok"):
@@ -120,6 +119,7 @@ def manage_positions(state):
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
         
+        # خواندن قیمت ورود واقعی از صرافی
         exchange_entry = float(pos.get("entryPrice") or 0)
         if exchange_entry > 0:
             t["entry"] = exchange_entry
@@ -129,12 +129,22 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
+        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
+        # 🌟 سیستم همگام‌سازی جدید: اگر کاربر استاپ رو عوض کرد، ربات اعمالش کنه
+        if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
+            payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
+            fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
+            if fix_status in [200, 201]:
+                send_telegram(f"🔄 <b>همگام‌سازی {pos_key}</b>\nاستاپ لاس جدید ({sl}) از کامند شما اعمال شد.")
+            current_sl = sl
+
+        # 🛡️ سیستم دفاعی 2: اصلاح تی‌پی دستی
         if abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
@@ -156,6 +166,7 @@ def manage_positions(state):
         
         new_sl, new_tp, reason = current_sl, tp4, "" 
         
+        # --- منطق پله‌ای 9 مرحله‌ای ---
         if t.get("current_stage", 0) == 0:
             if (is_long and current_price >= half_1) or (not is_long and current_price <= half_1):
                 new_sl = entry
@@ -226,6 +237,7 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
+        # 🌟 اجرای تغییرات
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
