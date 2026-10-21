@@ -42,7 +42,6 @@ def load_state():
         try:
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
-                # 🌟 اصلاح باگ: اضافه کردن current_stage به پوزیشن‌های قدیمی
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
@@ -93,7 +92,7 @@ def check_telegram(state):
     except Exception as e:
         print("TG Error:", e)
 
-# ================= منطق پله‌ای و اصلاح خودکار =================
+# ================= منطق پله‌ای =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
@@ -121,15 +120,21 @@ def manage_positions(state):
         entry, sl, tp1 = t["entry"], t["sl"], t["tp1"]
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         
-        # 🌟 بخش اصلاح تی‌پی دستی شما
+        # 🌟 اصلاح تی‌پی: حالا استاپ لاس رو هم با خودش می‌فرسته تا پاک نشه
         if abs(current_tp - tp4) > 0.00001:
-            payload_fix = {"takeProfit": str(round(tp4, 6))}
+            # اگر استاپ روی صرافی صفر بود (پاک شده بود)، استاپ سیگنال رو برمی‌گردونیم
+            safe_sl = current_sl if current_sl > 0 else sl
+            payload_fix = {
+                "stopLoss": str(round(safe_sl, 6)),
+                "takeProfit": str(round(tp4, 6))
+            }
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload_fix)
             if fix_status in [200, 201]:
-                send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی شد. ربات آن را به تارگت نهایی ({tp4}) تغییر داد تا مدیریت پله‌ای به هم نریزد.")
+                send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی اصلاح شد و استاپ لاس حفظ شد.")
                 current_tp = tp4
+                current_sl = safe_sl
 
-        # --- محاسبات درصدی ---
+        # محاسبات درصدی
         dist_to_tp1 = abs(tp1 - entry)
         half_tp1 = entry + (dist_to_tp1 * 0.5) if is_long else entry - (dist_to_tp1 * 0.5)
         trigger_80 = entry + (dist_to_tp1 * 0.8) if is_long else entry - (dist_to_tp1 * 0.8)
@@ -137,21 +142,19 @@ def manage_positions(state):
         
         new_sl, new_tp, reason = current_sl, current_tp, ""
         
-        # مرحله 0: ۵۰ درصد راه -> ریسک فری
+        # مراحل (0 تا 6)
         if t.get("current_stage", 0) == 0:
             if (is_long and current_price >= half_tp1) or (not is_long and current_price <= half_tp1):
                 new_sl = entry
                 t["current_stage"] = 1
                 reason = "ریسک‌فری (استاپ روی نقطه ورود)"
 
-        # مرحله 1: ۸۰ درصد راه -> استاپ روی ۴۰ درصد
         elif t.get("current_stage", 0) == 1:
             if (is_long and current_price >= trigger_80) or (not is_long and current_price <= trigger_80):
                 new_sl = sl_40
                 t["current_stage"] = 2
                 reason = "رسیدن به 80% راه TP1 (استاپ روی 40% راه)"
 
-        # مرحله 2: رسیدن به TP1
         elif t.get("current_stage", 0) == 2:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 new_sl = trigger_80
@@ -159,7 +162,6 @@ def manage_positions(state):
                 t["current_stage"] = 3
                 reason = "رسیدن به TP1 (استاپ روی 80% راه، تارگت TP2)"
 
-        # مرحله 3: رسیدن به TP2
         elif t.get("current_stage", 0) == 3:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = tp1
@@ -167,7 +169,6 @@ def manage_positions(state):
                 t["current_stage"] = 4
                 reason = "رسیدن به TP2 (استاپ روی TP1، تارگت TP3)"
 
-        # مرحله 4: رسیدن به TP3
         elif t.get("current_stage", 0) == 4:
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = tp2
@@ -175,7 +176,6 @@ def manage_positions(state):
                 t["current_stage"] = 5
                 reason = "رسیدن به TP3 (استاپ روی TP2، تارگت TP4)"
 
-        # مرحله 5: رسیدن به TP4 (تمدید تارگت)
         elif t.get("current_stage", 0) == 5:
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
                 dist_tp3_tp4 = abs(tp4 - tp3)
@@ -188,7 +188,6 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {extended_tp:.4f}"
 
-        # مرحله 6: تمدیدهای بعدی
         elif t.get("current_stage", 0) >= 6:
             if (is_long and current_price >= new_tp) or (not is_long and current_price <= new_tp):
                 dist_tp3_tp4 = abs(tp4 - tp3)
@@ -199,16 +198,24 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # اجرای تغییرات در صرافی
+        # 🌟 اجرای تغییرات (بازنویسی شده: همیشه هم SL و هم TP رو می‌فرسته)
         if reason:
-            payload = {}
-            if abs(new_sl - current_sl) > 0.00001: payload["stopLoss"] = str(round(new_sl, 6))
-            if abs(new_tp - current_tp) > 0.00001: payload["takeProfit"] = str(round(new_tp, 6))
+            # اگر متغیری تغییر نکرده، همون مقدار قبلی رو بگیر
+            final_sl = new_sl if abs(new_sl - current_sl) > 0.00001 else current_sl
+            final_tp = new_tp if abs(new_tp - current_tp) > 0.00001 else current_tp
             
-            if payload:
-                p_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
-                if p_status in [200, 201]:
-                    send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ جدید: {new_sl:.4f}\nتارگت جدید: {new_tp:.4f}")
+            # اگر هر کدوم صفر بودن (به هر دلیلی)، مقدار سیگنال اصلی رو بذار
+            if final_sl == 0: final_sl = sl
+            if final_tp == 0: final_tp = tp4
+
+            payload = {
+                "stopLoss": str(round(final_sl, 6)),
+                "takeProfit": str(round(final_tp, 6))
+            }
+            
+            p_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
+            if p_status in [200, 201]:
+                send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ جدید: {final_sl:.4f}\nتارگت جدید: {final_tp:.4f}")
 
     # پاکسازی پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
