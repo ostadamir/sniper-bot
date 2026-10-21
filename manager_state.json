@@ -1,4 +1,15 @@
 {
-    "targets": {},
-    "offset": 0
+    "targets": {
+        "CL_LONG": {
+            "entry": 95.6,
+            "sl": 91.13,
+            "tp1": 99.59,
+            "tp2": 104.09,
+            "tp3": 108.58,
+            "tp4": 113.51,
+            "current_stage": 0,
+            "closed": false
+        }
+    },
+    "offset": 209535410
 }
