@@ -1,11 +1,10 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ================= تنظیمات =================
+# ================= تنظیمات (هاردکد شده) =================
 TELEGRAM_TOKEN = "8865889106:AAFBVDLcTCn1kpvbzI_N6AoJd80VMXFI5zY"
 TELEGRAM_CHAT_ID = "7702136864"
 
-# 🚨 کلیدهای صرافی ترودید
 TRUETRADE_KEY = "VHezc6KrbqcHTlNzVRK3I0rCysxjYnyFJDw-n5pQ"
 TRUETRADE_SECRET = "b496b58d14853b92219845c699b8f64367207251c2960a1e4866dd0bcb7005b3"
 
@@ -101,15 +100,15 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات مدیریتش رو شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق ۱۰ مرحله‌ای مدیریتش رو شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
-# ================= منطق پله‌ای هوشمند =================
+# ================= منطق پله‌ای ۱۰ مرحله‌ای =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): 
-        print("Failed to get positions from TrueTrade. Check API keys or IP whitelist.")
+        print("Failed to get positions from TrueTrade. Check API keys.")
         return
     
     items = response.get("items", [])
@@ -144,6 +143,7 @@ def manage_positions(state):
         
         print(f"Checking {pos_key} | Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
 
+        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             print(f"SL is 0. Fixing to {sl}...")
@@ -151,6 +151,7 @@ def manage_positions(state):
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
+        # 🔄 سیستم همگام‌سازی: اگر در مرحله 0 هستیم و استاپ با کامند فرق دارد
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
             print(f"Syncing SL: Exchange {current_sl} != Command {sl}...")
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
@@ -159,7 +160,8 @@ def manage_positions(state):
                 send_telegram(f"🔄 <b>همگام‌سازی {pos_key}</b>\nاستاپ لاس جدید ({sl}) از کامند شما اعمال شد.")
             current_sl = sl
 
-        if abs(current_tp - tp4) > 0.00001:
+        # 🛠️ سیستم اصلاح تی‌پی: تا قبل از مرحله 9، تی‌پی باید TP4 باشه
+        if t.get("current_stage", 0) < 9 and abs(current_tp - tp4) > 0.00001:
             print(f"Fixing TP: Exchange {current_tp} != Command {tp4}...")
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
@@ -167,90 +169,105 @@ def manage_positions(state):
                 send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی و به تارگت نهایی ({tp4}) تغییر کرد.")
             current_tp = tp4
 
+        # 🌟 محاسبات فواصل
         dist1 = abs(tp1 - entry)
-        half_1 = entry + (dist1 * 0.5) if is_long else entry - (dist1 * 0.5)
-        per80_1 = entry + (dist1 * 0.8) if is_long else entry - (dist1 * 0.8)
-        per40_1 = entry + (dist1 * 0.4) if is_long else entry - (dist1 * 0.4)
-
         dist2 = abs(tp2 - tp1)
-        half_2 = tp1 + (dist2 * 0.5) if is_long else tp1 - (dist2 * 0.5)
-        per80_2 = tp1 + (dist2 * 0.8) if is_long else tp1 - (dist2 * 0.8)
-
         dist3 = abs(tp3 - tp2)
-        half_3 = tp2 + (dist3 * 0.5) if is_long else tp2 - (dist3 * 0.5)
-        
-        new_sl, new_tp, reason = current_sl, tp4, "" 
-        
-        if t.get("current_stage", 0) == 0:
-            if (is_long and current_price >= half_1) or (not is_long and current_price <= half_1):
+        dist4 = abs(tp4 - tp3)
+
+        # محاسبه نقاط کلیدی
+        if is_long:
+            half1 = entry + (dist1 * 0.5)
+            per80_1 = entry + (dist1 * 0.8)
+            per40_1 = entry + (dist1 * 0.4)
+            half2 = tp1 + (dist2 * 0.5)
+            half3 = tp2 + (dist3 * 0.5)
+            half4 = tp3 + (dist4 * 0.5)
+        else:
+            half1 = entry - (dist1 * 0.5)
+            per80_1 = entry - (dist1 * 0.8)
+            per40_1 = entry - (dist1 * 0.4)
+            half2 = tp1 - (dist2 * 0.5)
+            half3 = tp2 - (dist3 * 0.5)
+            half4 = tp3 - (dist4 * 0.5)
+
+        new_sl, new_tp, reason = current_sl, current_tp, "" 
+        stage = t.get("current_stage", 0)
+
+        # --- منطق ۱۰ مرحله‌ای ---
+        if stage == 0:
+            if (is_long and current_price >= half1) or (not is_long and current_price <= half1):
                 new_sl = entry
                 t["current_stage"] = 1
-                reason = "ریسک‌فری (استاپ روی نقطه ورود)"
+                reason = "۵۰٪ راه TP1 (ریسک‌فری / استاپ روی نقطه ورود)"
 
-        elif t.get("current_stage", 0) == 1:
+        elif stage == 1:
             if (is_long and current_price >= per80_1) or (not is_long and current_price <= per80_1):
                 new_sl = per40_1
                 t["current_stage"] = 2
-                reason = "۸۰٪ راه TP1 (استاپ روی ۴۰٪ راه)"
+                reason = "۸۰٪ راه TP1 (استاپ روی ۴۰٪ راه TP1)"
 
-        elif t.get("current_stage", 0) == 2:
+        elif stage == 2:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 new_sl = per80_1
                 t["current_stage"] = 3
-                reason = "رسیدن به TP1 (استاپ روی ۸۰٪ راه)"
+                reason = "رسیدن به TP1 (استاپ روی ۸۰٪ راه TP1)"
 
-        elif t.get("current_stage", 0) == 3:
-            if (is_long and current_price >= half_2) or (not is_long and current_price <= half_2):
+        elif stage == 3:
+            if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
                 new_sl = tp1
                 t["current_stage"] = 4
                 reason = "۵۰٪ راه TP2 (استاپ روی TP1)"
 
-        elif t.get("current_stage", 0) == 4:
-            if (is_long and current_price >= per80_2) or (not is_long and current_price <= per80_2):
-                new_sl = half_2
-                t["current_stage"] = 5
-                reason = "۸۰٪ راه TP2 (استاپ روی ۵۰٪ راه)"
-
-        elif t.get("current_stage", 0) == 5:
+        elif stage == 4:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
-                new_sl = per80_2
-                t["current_stage"] = 6
-                reason = "رسیدن به TP2 (استاپ روی ۸۰٪ راه)"
+                new_sl = half2
+                t["current_stage"] = 5
+                reason = "رسیدن به TP2 (استاپ روی ۵۰٪ راه TP2)"
 
-        elif t.get("current_stage", 0) == 6:
-            if (is_long and current_price >= half_3) or (not is_long and current_price <= half_3):
+        elif stage == 5:
+            if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
                 new_sl = tp2
-                t["current_stage"] = 7
+                t["current_stage"] = 6
                 reason = "۵۰٪ راه TP3 (استاپ روی TP2)"
 
-        elif t.get("current_stage", 0) == 7:
+        elif stage == 6:
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
-                new_sl = half_3
-                t["current_stage"] = 8
-                reason = "رسیدن به TP3 (استاپ روی ۵۰٪ راه)"
+                new_sl = half3
+                t["current_stage"] = 7
+                reason = "رسیدن به TP3 (استاپ روی ۵۰٪ راه TP3)"
 
-        elif t.get("current_stage", 0) == 8:
-            if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
-                dist_tp3_tp4 = abs(tp4 - tp3)
-                extended_tp = tp4 + dist_tp3_tp4 if is_long else tp4 - dist_tp3_tp4
-                
+        elif stage == 7:
+            if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
                 new_sl = tp3
-                new_tp = extended_tp
-                
+                t["current_stage"] = 8
+                reason = "۵۰٪ راه TP4 (استاپ روی TP3)"
+
+        elif stage == 8:
+            if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
+                new_sl = half4
                 t["current_stage"] = 9
-                t["tp4"] = extended_tp
-                reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {extended_tp:.4f}"
+                reason = "رسیدن به TP4 (استاپ روی ۵۰٪ راه TP4)"
 
-        elif t.get("current_stage", 0) >= 9:
-            if (is_long and current_price >= new_tp) or (not is_long and current_price <= new_tp):
-                dist_tp3_tp4 = abs(tp4 - tp3)
-                extended_tp = new_tp + dist_tp3_tp4 if is_long else new_tp - dist_tp3_tp4
-                
-                new_sl = current_tp
-                new_tp = extended_tp
-                t["tp4"] = extended_tp
-                reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
+        elif stage == 9:
+            if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
+                dist_ext = abs(tp4 - tp3)
+                new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
+                new_sl = tp3
+                t["tp4"] = new_tp
+                t["current_stage"] = 10
+                reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {new_tp:.4f}"
 
+        elif stage >= 10:
+            if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
+                dist_ext = abs(tp4 - tp3)
+                new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
+                new_sl = t["tp4"] # استاپ روی تارگت قبلی
+                t["tp4"] = new_tp
+                t["current_stage"] = stage + 1
+                reason = f"🚀 تمدید مجدد تارگت! استاپ روی {new_sl:.4f}، تارگت جدید: {new_tp:.4f}"
+
+        # 🌟 اجرای تغییرات در صرافی
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
@@ -262,6 +279,7 @@ def manage_positions(state):
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
+    # پاکسازی پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
