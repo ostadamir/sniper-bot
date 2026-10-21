@@ -10,7 +10,8 @@
             "tp1_done": false,
             "half_tp2_done": false,
             "tp2_done": false,
-            "closed": true
+            "closed": true,
+            "current_stage": 0
         },
         "LINK_SHORT": {
             "entry": 11.896,
@@ -22,7 +23,8 @@
             "tp1_done": false,
             "half_tp2_done": false,
             "tp2_done": false,
-            "closed": true
+            "closed": true,
+            "current_stage": 0
         },
         "ETH_LONG": {
             "entry": 2403.2,
@@ -36,7 +38,8 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": true
+            "closed": true,
+            "current_stage": 0
         },
         "ETH_SHORT": {
             "entry": 2382.0,
@@ -50,7 +53,8 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": true
+            "closed": true,
+            "current_stage": 0
         },
         "XLM_LONG": {
             "entry": 0.17668,
@@ -64,7 +68,8 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": true
+            "closed": true,
+            "current_stage": 0
         },
         "BTC_SHORT": {
             "entry": 81572.4,
@@ -78,7 +83,8 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": true
+            "closed": true,
+            "current_stage": 0
         },
         "CL_LONG": {
             "entry": 95.6,
@@ -92,7 +98,8 @@
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": false
+            "closed": false,
+            "current_stage": 0
         }
     },
     "offset": 209535399
