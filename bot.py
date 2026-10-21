@@ -42,7 +42,6 @@ def load_state():
         try:
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
-                # اضافه کردن فیلدهای جدید به پوزیشن‌های قدیمی برای جلوگیری از کرش
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
@@ -93,7 +92,7 @@ def check_telegram(state):
     except Exception as e:
         print("TG Error:", e)
 
-# ================= منطق پله‌ای پیشرفته (Defensive) =================
+# ================= منطق پله‌ای هوشمند =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
@@ -116,25 +115,36 @@ def manage_positions(state):
         current_price = float(pos.get("markPrice") or 0)
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
+        
+        # 🌟 جادوی جدید: خواندن قیمت ورود واقعی از صرافی
+        exchange_entry = float(pos.get("entryPrice") or 0)
+        
+        # اگه صرافی قیمت ورود رو داد و با اون چیزی که تو کامند دادی فرق داشت،
+        # اون رو جایگزین می‌کنیم تا محاسبات دقیق بشه
+        if exchange_entry > 0:
+            t["entry"] = exchange_entry
+            
+        entry = t["entry"]
+        sl, tp1 = t["sl"], t["tp1"]
+        tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        entry, sl, tp1 = t["entry"], t["sl"], t["tp1"]
-        tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
-        
-        # 🛡️ سیستم دفاعی 1: اگر استاپ لاس روی صفر بود (پاک شده بود)، فوراً برگردون
+        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
-            payload = {"stopLoss": str(t["sl"]), "takeProfit": str(tp4)}
+            payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
-            current_sl = t["sl"]
-            send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات به صورت خودکار آن را به {t['sl']} برگرداند.")
+            current_sl = sl
+            send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
-        # 🛡️ سیستم دفاعی 2: اگر تی‌پی دستی زده شده، اون رو به TP4 تغییر بده تا قفل بشه
+        # 🛡️ سیستم دفاعی 2: اصلاح تی‌پی دستی
         if abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
-            tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
+            fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
+            if fix_status in [200, 201]:
+                send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی و به تارگت نهایی ({tp4}) تغییر کرد.")
             current_tp = tp4
 
-        # 🌟 محاسبات فواصل
+        # 🌟 محاسبات بر اساس قیمت ورودِ واقعیِ صرافی (entry)
         dist1 = abs(tp1 - entry)
         half_1 = entry + (dist1 * 0.5) if is_long else entry - (dist1 * 0.5)
         per80_1 = entry + (dist1 * 0.8) if is_long else entry - (dist1 * 0.8)
@@ -220,7 +230,7 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # 🌟 اجرای تغییرات (همیشه هم SL و هم TP با هم فرستاده میشن)
+        # 🌟 اجرای تغییرات
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
