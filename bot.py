@@ -78,18 +78,17 @@ def check_telegram(state):
                             side, entry, sl, tp1, tp2, tp3, tp4 = parts[2:]
                             pos_key = f"{symbol}_{side.upper()}"
                             
-                            # 🌟 ذخیره اطلاعات برای مدیریت پویا
                             state["targets"][pos_key] = {
                                 "entry": float(entry), "sl": float(sl),
                                 "tp1": float(tp1), "tp2": float(tp2), "tp3": float(tp3), "tp4": float(tp4),
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nورود: {entry}\nاستاپ: {sl}\nTP4: {tp4}\nربات مدیریتش رو شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nورود: {entry}\nاستاپ: {sl}\nربات با استراتژی ۵۰-۸۰-۴۰ مدیریتش رو شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
-# ================= منطق پله‌ای ترکیبی =================
+# ================= منطق پله‌ای هوشمند =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
@@ -117,68 +116,73 @@ def manage_positions(state):
         entry, sl, tp1 = t["entry"], t["sl"], t["tp1"]
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         
-        # نقاط راه‌های میانی (مثل کد قبلی)
-        half_tp1 = (entry + tp1) / 2
-        three_quarter_tp1 = (entry + 3 * tp1) / 4
-        half_tp2 = (tp1 + tp2) / 2
-        three_quarter_tp2 = (tp1 + 3 * tp2) / 4
-        half_tp3 = (tp2 + tp3) / 2
+        # 🌟 محاسبات بر اساس درصدهای تو (با در نظر گرفتن LONG و SHORT)
+        dist_to_tp1 = abs(tp1 - entry)
+        
+        half_tp1 = entry + (dist_to_tp1 * 0.5) if is_long else entry - (dist_to_tp1 * 0.5)
+        trigger_80 = entry + (dist_to_tp1 * 0.8) if is_long else entry - (dist_to_tp1 * 0.8)
+        sl_40 = entry + (dist_to_tp1 * 0.4) if is_long else entry - (dist_to_tp1 * 0.4)
         
         new_sl, new_tp, reason = current_sl, current_tp, ""
         
-        # مرحله 1: ریسک فری در نصف راه TP1 (امنیت بالا)
+        # مرحله 0: ۵۰ درصد راه -> ریسک فری (استاپ روی نقطه ورود)
         if t["current_stage"] == 0:
             if (is_long and current_price >= half_tp1) or (not is_long and current_price <= half_tp1):
                 new_sl = entry
                 t["current_stage"] = 1
                 reason = "ریسک‌فری (استاپ روی نقطه ورود)"
 
-        # مرحله 2: رسیدن به TP1
+        # مرحله 1: ۸۰ درصد راه -> استاپ روی ۴۰ درصد راه
         elif t["current_stage"] == 1:
-            if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
-                new_sl = three_quarter_tp1
-                new_tp = tp2
+            if (is_long and current_price >= trigger_80) or (not is_long and current_price <= trigger_80):
+                new_sl = sl_40
                 t["current_stage"] = 2
-                reason = "رسیدن به TP1 (استاپ روی 3/4 راه، تارگت TP2)"
+                reason = "رسیدن به 80% راه TP1 (استاپ روی 40% راه)"
+
+        # مرحله 2: رسیدن به TP1 -> استاپ روی ۸۰ درصد راه، تارگت TP2
+        elif t["current_stage"] == 2:
+            if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
+                new_sl = trigger_80
+                new_tp = tp2
+                t["current_stage"] = 3
+                reason = "رسیدن به TP1 (استاپ روی 80% راه، تارگت TP2)"
 
         # مرحله 3: رسیدن به TP2
-        elif t["current_stage"] == 2:
+        elif t["current_stage"] == 3:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = tp1
                 new_tp = tp3
-                t["current_stage"] = 3
+                t["current_stage"] = 4
                 reason = "رسیدن به TP2 (استاپ روی TP1، تارگت TP3)"
 
         # مرحله 4: رسیدن به TP3
-        elif t["current_stage"] == 3:
+        elif t["current_stage"] == 4:
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = tp2
                 new_tp = tp4
-                t["current_stage"] = 4
+                t["current_stage"] = 5
                 reason = "رسیدن به TP3 (استاپ روی TP2، تارگت TP4)"
 
-        # 🌟 مرحله 5 (جادوی جدید): رسیدن به TP4 و تمدید تارگت
-        elif t["current_stage"] == 4:
+        # 🌟 مرحله 5: رسیدن به TP4 (تمدید تارگت)
+        elif t["current_stage"] == 5:
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
-                # محاسبه فاصله TP3 تا TP4
-                dist = abs(tp4 - tp3)
-                # ساخت تارگت جدید
-                extended_tp = tp4 + dist if is_long else tp4 - dist
+                dist_tp3_tp4 = abs(tp4 - tp3)
+                extended_tp = tp4 + dist_tp3_tp4 if is_long else tp4 - dist_tp3_tp4
                 
-                new_sl = tp3 # استاپ روی TP3 (قفل سود عالی)
+                new_sl = tp3
                 new_tp = extended_tp
                 
-                t["current_stage"] = 5
-                t["tp4"] = extended_tp # آپدیت حافظه با تارگت جدید
+                t["current_stage"] = 6
+                t["tp4"] = extended_tp
                 reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {extended_tp:.4f}"
 
         # 🌟 مرحله 6: تمدیدهای بی‌نهایت بعدی
-        elif t["current_stage"] >= 5:
+        elif t["current_stage"] >= 6:
             if (is_long and current_price >= new_tp) or (not is_long and current_price <= new_tp):
-                dist = abs(tp4 - tp3) # همون فاصله ثابت قبلی
-                extended_tp = new_tp + dist if is_long else new_tp - dist
+                dist_tp3_tp4 = abs(tp4 - tp3)
+                extended_tp = new_tp + dist_tp3_tp4 if is_long else new_tp - dist_tp3_tp4
                 
-                new_sl = current_tp # استاپ روی تارگت قبلی
+                new_sl = current_tp
                 new_tp = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
