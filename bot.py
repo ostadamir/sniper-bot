@@ -1,9 +1,9 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ================= تنظیمات =================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+# ================= تنظیمات (هاردکد شده برای تست) =================
+TELEGRAM_TOKEN = "8865889106:AAFBVDLcTCn1kpvbzI_N6AoJd80VMXFI5zY"
+TELEGRAM_CHAT_ID = "7702136864"
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
@@ -60,7 +60,7 @@ def check_telegram(state):
     try:
         r = requests.get(url, params={"offset": offset, "timeout": 5}, timeout=10).json()
         
-        # 🌟 این خط برای دیباگ اضافه شد تا ببینیم تلگرام چی جواب میده
+        # چاپ لاگ برای اینکه ببینیم چی میشه
         print("Telegram Response:", r)
         
         if r.get("ok"):
@@ -120,7 +120,6 @@ def manage_positions(state):
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
         
-        # 🌟 خواندن قیمت ورود واقعی از صرافی
         exchange_entry = float(pos.get("entryPrice") or 0)
         if exchange_entry > 0:
             t["entry"] = exchange_entry
@@ -130,14 +129,12 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
-        # 🛡️ سیستم دفاعی 2: اصلاح تی‌پی دستی
         if abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
@@ -145,7 +142,6 @@ def manage_positions(state):
                 send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی و به تارگت نهایی ({tp4}) تغییر کرد.")
             current_tp = tp4
 
-        # 🌟 محاسبات بر اساس قیمت ورودِ واقعیِ صرافی (entry)
         dist1 = abs(tp1 - entry)
         half_1 = entry + (dist1 * 0.5) if is_long else entry - (dist1 * 0.5)
         per80_1 = entry + (dist1 * 0.8) if is_long else entry - (dist1 * 0.8)
@@ -160,7 +156,6 @@ def manage_positions(state):
         
         new_sl, new_tp, reason = current_sl, tp4, "" 
         
-        # --- منطق پله‌ای 9 مرحله‌ای ---
         if t.get("current_stage", 0) == 0:
             if (is_long and current_price >= half_1) or (not is_long and current_price <= half_1):
                 new_sl = entry
@@ -231,7 +226,6 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # 🌟 اجرای تغییرات (همیشه هم SL و هم TP فرستاده میشن تا هیچی پاک نشه)
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
@@ -242,7 +236,6 @@ def manage_positions(state):
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
-    # پاکسازی
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
