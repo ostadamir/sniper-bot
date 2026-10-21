@@ -10,9 +10,6 @@ TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 
-def now_utc():
-    return datetime.datetime.now(datetime.timezone.utc)
-
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -64,50 +61,41 @@ def check_telegram(state):
                 if "message" in u and "text" in u["message"]:
                     text = u["message"]["text"]
                     
-                    # 🌟 دستور جدید برای لغو مدیریت
                     if text.startswith("/cancel"):
                         parts = text.split()
                         if len(parts) == 3:
                             symbol = parts[1].upper().replace("USDT", "")
                             side = parts[2].upper()
                             pos_key = f"{symbol}_{side}"
-                            
                             if pos_key in state["targets"]:
                                 del state["targets"][pos_key]
-                                send_telegram(f"🛑 مدیریت {pos_key} لغو شد.\nربات دیگر این پوزیشن را دستکاری نمی‌کند و کنترل کامل دست شماست.")
-                            else:
-                                send_telegram(f"⚠️ پوزیشنی با این مشخصات در حافظه ربات یافت نشد: {pos_key}")
-                        else:
-                            send_telegram("❌ فرمت اشتباهه. نمونه:\n/cancel ETH LONG")
+                                send_telegram(f"🛑 مدیریت {pos_key} لغو شد.")
 
-                    # دستور ثبت سیگنال جدید
                     elif text.startswith("/new"):
                         parts = text.split()
                         if len(parts) == 9:
                             symbol = parts[1].upper().replace("USDT", "")
                             side, entry, sl, tp1, tp2, tp3, tp4 = parts[2:]
-                            
                             pos_key = f"{symbol}_{side.upper()}"
+                            
+                            # 🌟 ذخیره اطلاعات برای مدیریت پویا
                             state["targets"][pos_key] = {
                                 "entry": float(entry), "sl": float(sl),
                                 "tp1": float(tp1), "tp2": float(tp2), "tp3": float(tp3), "tp4": float(tp4),
-                                "risk_free_done": False, "tp1_done": False, 
-                                "half_tp2_done": False, "tp2_done": False, "tp3_done": False, "closed": False
+                                "current_stage": 0,
+                                "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nورود: {entry}\nاستاپ: {sl}\nTP1: {tp1}\nTP4: {tp4}\nربات مدیریتش رو شروع کرد.")
-                        else:
-                            send_telegram("❌ فرمت اشتباهه. نمونه (با 4 تارگت):\n/new ETH LONG 2403 2331 2482 2500 2518 2536")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nورود: {entry}\nاستاپ: {sl}\nTP4: {tp4}\nربات مدیریتش رو شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
-# ================= منطق پله‌ای =================
+# ================= منطق پله‌ای ترکیبی =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
-    closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     
     open_keys = set()
     
@@ -126,57 +114,75 @@ def manage_positions(state):
         current_tp = float(pos.get("takeProfit", 0))
         is_long = (side == "LONG")
         
-        entry, sl, tp1, tp2, tp3 = t["entry"], t["sl"], t["tp1"], t["tp2"], t["tp3"]
-        tp4 = t.get("tp4", None)
+        entry, sl, tp1 = t["entry"], t["sl"], t["tp1"]
+        tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         
+        # نقاط راه‌های میانی (مثل کد قبلی)
         half_tp1 = (entry + tp1) / 2
         three_quarter_tp1 = (entry + 3 * tp1) / 4
         half_tp2 = (tp1 + tp2) / 2
         three_quarter_tp2 = (tp1 + 3 * tp2) / 4
         half_tp3 = (tp2 + tp3) / 2
-        three_quarter_tp3 = (tp2 + 3 * tp3) / 4
         
         new_sl, new_tp, reason = current_sl, current_tp, ""
         
-        if not t.get("risk_free_done", False):
+        # مرحله 1: ریسک فری در نصف راه TP1 (امنیت بالا)
+        if t["current_stage"] == 0:
             if (is_long and current_price >= half_tp1) or (not is_long and current_price <= half_tp1):
                 new_sl = entry
-                t["risk_free_done"] = True
+                t["current_stage"] = 1
                 reason = "ریسک‌فری (استاپ روی نقطه ورود)"
-                
-        if t.get("risk_free_done", False) and not t.get("tp1_done", False):
-            if (is_long and current_price >= three_quarter_tp1) or (not is_long and current_price <= three_quarter_tp1):
-                new_sl = half_tp1
+
+        # مرحله 2: رسیدن به TP1
+        elif t["current_stage"] == 1:
+            if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
+                new_sl = three_quarter_tp1
                 new_tp = tp2
-                t["tp1_done"] = True
-                reason = "سه‌چهارم راه TP1 (استاپ روی نصف راه، تارگت TP2)"
+                t["current_stage"] = 2
+                reason = "رسیدن به TP1 (استاپ روی 3/4 راه، تارگت TP2)"
 
-        if t.get("tp1_done", False) and not t.get("half_tp2_done", False):
-            if (is_long and current_price >= half_tp2) or (not is_long and current_price <= half_tp2):
+        # مرحله 3: رسیدن به TP2
+        elif t["current_stage"] == 2:
+            if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = tp1
-                t["half_tp2_done"] = True
-                reason = "نصف راه TP2 (استاپ روی TP1)"
-                
-        if t.get("half_tp2_done", False) and not t.get("tp2_done", False):
-            if (is_long and current_price >= three_quarter_tp2) or (not is_long and current_price <= three_quarter_tp2):
-                new_sl = half_tp2
                 new_tp = tp3
-                t["tp2_done"] = True
-                reason = "سه‌چهارم راه TP2 (استاپ روی نصف راه، تارگت TP3)"
+                t["current_stage"] = 3
+                reason = "رسیدن به TP2 (استاپ روی TP1، تارگت TP3)"
 
-        if t.get("tp2_done", False) and not t.get("tp3_done", False):
-            if (is_long and current_price >= half_tp3) or (not is_long and current_price <= half_tp3):
+        # مرحله 4: رسیدن به TP3
+        elif t["current_stage"] == 3:
+            if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = tp2
-                t["tp3_done"] = True
-                reason = "نصف راه TP3 (استاپ روی TP2)"
-                
-        if t.get("tp3_done", False) and tp4 and not t.get("tp4_done", False):
-            if (is_long and current_price >= three_quarter_tp3) or (not is_long and current_price <= three_quarter_tp3):
-                new_sl = half_tp3
                 new_tp = tp4
-                t["tp4_done"] = True
-                reason = "سه‌چهارم راه TP3 (استاپ روی نصف راه، تارگت TP4)"
+                t["current_stage"] = 4
+                reason = "رسیدن به TP3 (استاپ روی TP2، تارگت TP4)"
 
+        # 🌟 مرحله 5 (جادوی جدید): رسیدن به TP4 و تمدید تارگت
+        elif t["current_stage"] == 4:
+            if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
+                # محاسبه فاصله TP3 تا TP4
+                dist = abs(tp4 - tp3)
+                # ساخت تارگت جدید
+                extended_tp = tp4 + dist if is_long else tp4 - dist
+                
+                new_sl = tp3 # استاپ روی TP3 (قفل سود عالی)
+                new_tp = extended_tp
+                
+                t["current_stage"] = 5
+                t["tp4"] = extended_tp # آپدیت حافظه با تارگت جدید
+                reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {extended_tp:.4f}"
+
+        # 🌟 مرحله 6: تمدیدهای بی‌نهایت بعدی
+        elif t["current_stage"] >= 5:
+            if (is_long and current_price >= new_tp) or (not is_long and current_price <= new_tp):
+                dist = abs(tp4 - tp3) # همون فاصله ثابت قبلی
+                extended_tp = new_tp + dist if is_long else new_tp - dist
+                
+                new_sl = current_tp # استاپ روی تارگت قبلی
+                new_tp = extended_tp
+                reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
+
+        # اجرای تغییرات در صرافی
         if reason:
             payload = {}
             if abs(new_sl - current_sl) > 0.00001: payload["stopLoss"] = str(round(new_sl, 6))
@@ -185,25 +191,13 @@ def manage_positions(state):
             if payload:
                 p_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
                 if p_status in [200, 201]:
-                    send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ جدید: {new_sl}\nتارگت جدید: {new_tp}")
+                    send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ جدید: {new_sl:.4f}\nتارگت جدید: {new_tp:.4f}")
 
+    # پاکسازی پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
-            symbol = key.split("_")[0] + "USDT"
-            side = key.split("_")[1]
-            matching_closed = [p for p in closed_positions if p["symbol"] == symbol and p["side"] == side]
-            pnl_text = "نامشخص"
-            reason_text = "نامشخص"
-            if matching_closed:
-                matching_closed.sort(key=lambda x: x.get("updatedAt", ""), reverse=True)
-                last_closed = matching_closed[0]
-                realized_pnl = float(last_closed.get("realizedPnL", 0))
-                closing_reason = last_closed.get("closingReason", "")
-                pnl_text = f"{realized_pnl:+.2f} USDT"
-                reasons = {"STOPLOSS": "حد ضرر (Stop Loss)", "TAKEPROFIT": "حد سود (Take Profit)", "MANUAL": "دستی (Manual)"}
-                reason_text = reasons.get(closing_reason, closing_reason)
-            send_telegram(f"🏁 <b>پوزیشن {key} بسته شد</b>\nدلیل: {reason_text}\nسود/ضرر: {pnl_text}\nاز لیست خارج شد.")
+            send_telegram(f"🏁 <b>پوزیشن {key} بسته شد</b>\nاز لیست خارج شد.")
 
 def run():
     print("Checking...")
