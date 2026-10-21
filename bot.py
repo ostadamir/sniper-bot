@@ -32,8 +32,15 @@ def tt_request(method, uri, payload=None):
             res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
         elif method == "PATCH":
             res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
+        
+        # 🌟 چاپ لاگ برای دیباگ صرافی
+        print(f"TT API [{method}] {uri} -> Status: {res.status_code}")
+        if res.status_code not in [200, 201]:
+            print(f"TT API Error Response: {res.text}")
+            
         return res.status_code, res.json() if res.text else {}
     except Exception as e:
+        print("TT API Exception:", e)
         return 500, str(e)
 
 # ================= حافظه =================
@@ -59,7 +66,6 @@ def check_telegram(state):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         r = requests.get(url, params={"offset": offset, "timeout": 5}, timeout=10).json()
-        
         print("Telegram Response:", r)
         
         if r.get("ok"):
@@ -98,10 +104,15 @@ def check_telegram(state):
 # ================= منطق پله‌ای هوشمند =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
-    if status != 200 or not isinstance(response, dict): return
+    if status != 200 or not isinstance(response, dict): 
+        print("Failed to get positions from TrueTrade.")
+        return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
+    
+    # 🌟 چاپ لاگ برای اینکه ببینیم چند تا پوزیشن باز پیدا کرد
+    print(f"Found {len(open_positions)} open positions on exchange.")
     
     open_keys = set()
     
@@ -119,7 +130,6 @@ def manage_positions(state):
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
         
-        # خواندن قیمت ورود واقعی از صرافی
         exchange_entry = float(pos.get("entryPrice") or 0)
         if exchange_entry > 0:
             t["entry"] = exchange_entry
@@ -129,15 +139,19 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
+        print(f"Checking {pos_key} | Current Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
+
         # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
+            print(f"SL is 0. Fixing to {sl}...")
             tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
-        # 🌟 سیستم همگام‌سازی جدید: اگر کاربر استاپ رو عوض کرد، ربات اعمالش کنه
+        # 🌟 سیستم همگام‌سازی جدید
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
+            print(f"Syncing SL: Exchange {current_sl} != Command {sl}...")
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if fix_status in [200, 201]:
@@ -146,6 +160,7 @@ def manage_positions(state):
 
         # 🛡️ سیستم دفاعی 2: اصلاح تی‌پی دستی
         if abs(current_tp - tp4) > 0.00001:
+            print(f"Fixing TP: Exchange {current_tp} != Command {tp4}...")
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if fix_status in [200, 201]:
@@ -243,6 +258,7 @@ def manage_positions(state):
                 "stopLoss": str(round(new_sl, 6)),
                 "takeProfit": str(round(new_tp, 6))
             }
+            print(f"Executing Stage Change: {reason} | New SL: {new_sl} | New TP: {new_tp}")
             
             p_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if p_status in [200, 201]:
