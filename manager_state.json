@@ -80,20 +80,20 @@
             "tp3_done": false,
             "closed": true
         },
-        "CLE_LONG": {
+        "CL_LONG": {
             "entry": 95.6,
             "sl": 91.14,
             "tp1": 99.59,
             "tp2": 104.09,
             "tp3": 108.58,
             "tp4": 113.51,
-            "risk_free_done": false,
+            "risk_free_done": true,
             "tp1_done": false,
             "half_tp2_done": false,
             "tp2_done": false,
             "tp3_done": false,
-            "closed": true
+            "closed": false
         }
     },
-    "offset": 209535397
+    "offset": 209535399
 }
