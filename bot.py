@@ -42,6 +42,7 @@ def load_state():
         try:
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
+                # اضافه کردن فیلدهای جدید به پوزیشن‌های قدیمی برای جلوگیری از کرش
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
@@ -127,7 +128,7 @@ def manage_positions(state):
             current_sl = t["sl"]
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات به صورت خودکار آن را به {t['sl']} برگرداند.")
 
-        # 🛡️ سیستم دفاعی 2: اگر تی‌پی با TP4 فرق داشت، اون رو به TP4 تغییر بده تا قفل بشه
+        # 🛡️ سیستم دفاعی 2: اگر تی‌پی دستی زده شده، اون رو به TP4 تغییر بده تا قفل بشه
         if abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
@@ -146,9 +147,9 @@ def manage_positions(state):
         dist3 = abs(tp3 - tp2)
         half_3 = tp2 + (dist3 * 0.5) if is_long else tp2 - (dist3 * 0.5)
         
-        new_sl, new_tp, reason = current_sl, tp4, "" # تی‌پی همیشه TP4 می‌مونه
+        new_sl, new_tp, reason = current_sl, tp4, "" 
         
-        # --- منطق پله‌ای ---
+        # --- منطق پله‌ای 9 مرحله‌ای ---
         if t.get("current_stage", 0) == 0:
             if (is_long and current_price >= half_1) or (not is_long and current_price <= half_1):
                 new_sl = entry
@@ -219,7 +220,7 @@ def manage_positions(state):
                 t["tp4"] = extended_tp
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {current_tp:.4f}، تارگت جدید: {extended_tp:.4f}"
 
-        # 🌟 اجرای تغییرات (همیشه هم SL و هم TP فرستاده میشن تا هیچی پاک نشه)
+        # 🌟 اجرای تغییرات (همیشه هم SL و هم TP با هم فرستاده میشن)
         if reason:
             payload = {
                 "stopLoss": str(round(new_sl, 6)),
