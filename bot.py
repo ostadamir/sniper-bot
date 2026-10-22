@@ -100,7 +100,7 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ریسک‌فری زودهنگام) شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ریسک‌فری ۳۰٪) شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
@@ -177,18 +177,18 @@ def manage_positions(state):
 
         # محاسبه نقاط کلیدی بر اساس درصدهای جدید
         if is_long:
-            trigger_rf = entry + (dist1 * 0.65) # ۶۵ درصد راه (۳۵ درصد مونده)
+            trigger_rf = entry + (dist1 * 0.30) # ۳۰ درصد راه (ریسک‌فری)
             trigger_70 = entry + (dist1 * 0.70) # ۷۰ درصد راه
-            sl_30 = entry + (dist1 * 0.30)      # ۳۰ درصد راه
+            sl_40 = entry + (dist1 * 0.40)      # ۴۰ درصد راه (قفل سود)
             per80_1 = entry + (dist1 * 0.80)    # ۸۰ درصد راه (برای بعد از TP1)
             
             half2 = tp1 + (dist2 * 0.5)
             half3 = tp2 + (dist3 * 0.5)
             half4 = tp3 + (dist4 * 0.5)
         else:
-            trigger_rf = entry - (dist1 * 0.65)
+            trigger_rf = entry - (dist1 * 0.30)
             trigger_70 = entry - (dist1 * 0.70)
-            sl_30 = entry - (dist1 * 0.30)
+            sl_40 = entry - (dist1 * 0.40)
             per80_1 = entry - (dist1 * 0.80)
             
             half2 = tp1 - (dist2 * 0.5)
@@ -203,13 +203,13 @@ def manage_positions(state):
             if (is_long and current_price >= trigger_rf) or (not is_long and current_price <= trigger_rf):
                 new_sl = entry
                 t["current_stage"] = 1
-                reason = "۶۵٪ راه TP1 (ریسک‌فری / استاپ روی نقطه ورود)"
+                reason = "۳۰٪ راه TP1 (ریسک‌فری / استاپ روی نقطه ورود)"
 
         elif stage == 1:
             if (is_long and current_price >= trigger_70) or (not is_long and current_price <= trigger_70):
-                new_sl = sl_30
+                new_sl = sl_40
                 t["current_stage"] = 2
-                reason = "۷۰٪ راه TP1 (استاپ روی ۳۰٪ راه TP1)"
+                reason = "۷۰٪ راه TP1 (استاپ روی ۴۰٪ راه TP1)"
 
         elif stage == 2:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
