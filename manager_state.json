@@ -9,7 +9,37 @@
             "tp4": 113.51,
             "current_stage": 3,
             "closed": true
+        },
+        "XRP_SHORT": {
+            "entry": 1.3251,
+            "sl": 1.3674,
+            "tp1": 1.2838,
+            "tp2": 1.2738,
+            "tp3": 1.2639,
+            "tp4": 1.2539,
+            "current_stage": 0,
+            "closed": false
+        },
+        "SOL_LONG": {
+            "entry": 104.66,
+            "sl": 102.694,
+            "tp1": 107.095,
+            "tp2": 107.881,
+            "tp3": 108.667,
+            "tp4": 109.453,
+            "current_stage": 0,
+            "closed": false
+        },
+        "ETH_LONG": {
+            "entry": 2403.42,
+            "sl": 2333.6,
+            "tp1": 2485.2,
+            "tp2": 2503.2,
+            "tp3": 2521.3,
+            "tp4": 2539.3,
+            "current_stage": 0,
+            "closed": false
         }
     },
-    "offset": 209535416
+    "offset": 209535419
 }
