@@ -100,7 +100,7 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ریسک‌فری ۳۰٪) شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ROI 10% و 20%) شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
@@ -141,7 +141,19 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        print(f"Checking {pos_key} | Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
+        # 🌟 محاسبه اهرم برای پیدا کردن قیمت ROI
+        leverage = float(pos.get("leverage") or 1)
+        if leverage <= 1:
+            # اگر صرافی اهرم نداد، از تقسیم سایز بر مارجین حساب می‌کنیم
+            size = float(pos.get("size") or 1)
+            margin = float(pos.get("margin") or 1)
+            leverage = size / margin if margin > 0 else 1
+
+        # قیمت‌هایی که معادل ۱۰٪ و ۲۰٪ سود (ROI) هستند
+        roi_10_price = entry + (entry * 0.10 / leverage) if is_long else entry - (entry * 0.10 / leverage)
+        roi_20_price = entry + (entry * 0.20 / leverage) if is_long else entry - (entry * 0.20 / leverage)
+        
+        print(f"Checking {pos_key} | Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp} | Lev: {leverage}")
 
         # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
@@ -161,7 +173,7 @@ def manage_positions(state):
             current_sl = sl
 
         # 🛠️ اصلاح تی‌پی دستی
-        if t.get("current_stage", 0) < 9 and abs(current_tp - tp4) > 0.00001:
+        if t.get("current_stage", 0) < 11 and abs(current_tp - tp4) > 0.00001:
             print(f"Fixing TP: Exchange {current_tp} != Command {tp4}...")
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
@@ -169,27 +181,25 @@ def manage_positions(state):
                 send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی و به تارگت نهایی ({tp4}) تغییر کرد.")
             current_tp = tp4
 
-        # 🌟 محاسبات فواصل
+        # 🌟 محاسبات فواصل قیمتی
         dist1 = abs(tp1 - entry)
         dist2 = abs(tp2 - tp1)
         dist3 = abs(tp3 - tp2)
         dist4 = abs(tp4 - tp3)
 
-        # محاسبه نقاط کلیدی بر اساس درصدهای جدید
+        # محاسبه نقاط کلیدی
         if is_long:
-            trigger_rf = entry + (dist1 * 0.30) # ۳۰ درصد راه (ریسک‌فری)
-            trigger_70 = entry + (dist1 * 0.70) # ۷۰ درصد راه
-            sl_40 = entry + (dist1 * 0.40)      # ۴۰ درصد راه (قفل سود)
-            per80_1 = entry + (dist1 * 0.80)    # ۸۰ درصد راه (برای بعد از TP1)
+            tp1_70 = entry + (dist1 * 0.70)
+            tp1_40 = entry + (dist1 * 0.40)
+            tp1_80 = entry + (dist1 * 0.80)
             
             half2 = tp1 + (dist2 * 0.5)
             half3 = tp2 + (dist3 * 0.5)
             half4 = tp3 + (dist4 * 0.5)
         else:
-            trigger_rf = entry - (dist1 * 0.30)
-            trigger_70 = entry - (dist1 * 0.70)
-            sl_40 = entry - (dist1 * 0.40)
-            per80_1 = entry - (dist1 * 0.80)
+            tp1_70 = entry - (dist1 * 0.70)
+            tp1_40 = entry - (dist1 * 0.40)
+            tp1_80 = entry - (dist1 * 0.80)
             
             half2 = tp1 - (dist2 * 0.5)
             half3 = tp2 - (dist3 * 0.5)
@@ -198,71 +208,77 @@ def manage_positions(state):
         new_sl, new_tp, reason = current_sl, current_tp, "" 
         stage = t.get("current_stage", 0)
 
-        # --- منطق پله‌ای ---
+        # --- منطق جدید پله‌ای ---
         if stage == 0:
-            if (is_long and current_price >= trigger_rf) or (not is_long and current_price <= trigger_rf):
+            if (is_long and current_price >= roi_10_price) or (not is_long and current_price <= roi_10_price):
                 new_sl = entry
                 t["current_stage"] = 1
-                reason = "۳۰٪ راه TP1 (ریسک‌فری / استاپ روی نقطه ورود)"
+                reason = "۱۰٪ رول (ریسک‌فری / استاپ روی نقطه ورود)"
 
         elif stage == 1:
-            if (is_long and current_price >= trigger_70) or (not is_long and current_price <= trigger_70):
-                new_sl = sl_40
+            if (is_long and current_price >= roi_20_price) or (not is_long and current_price <= roi_20_price):
+                new_sl = roi_10_price
                 t["current_stage"] = 2
-                reason = "۷۰٪ راه TP1 (استاپ روی ۴۰٪ راه TP1)"
+                reason = "۲۰٪ رول (استاپ روی قیمت ۱۰٪ رول)"
 
         elif stage == 2:
-            if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
-                new_sl = per80_1
+            if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
+                new_sl = tp1_40
                 t["current_stage"] = 3
-                reason = "رسیدن به TP1 (استاپ روی ۸۰٪ راه TP1)"
+                reason = "۷۰٪ راه TP1 (استاپ روی ۴۰٪ راه TP1)"
 
         elif stage == 3:
-            if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
-                new_sl = tp1
+            if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
+                new_sl = tp1_80
                 t["current_stage"] = 4
-                reason = "۵۰٪ راه TP2 (استاپ روی TP1)"
+                reason = "رسیدن به TP1 (استاپ روی ۸۰٪ راه TP1)"
 
         elif stage == 4:
-            if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
-                new_sl = half2
+            if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
+                new_sl = tp1
                 t["current_stage"] = 5
-                reason = "رسیدن به TP2 (استاپ روی ۵۰٪ راه TP2)"
+                reason = "۵۰٪ راه TP2 (استاپ روی TP1)"
 
         elif stage == 5:
-            if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
-                new_sl = tp2
+            if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
+                new_sl = half2
                 t["current_stage"] = 6
-                reason = "۵۰٪ راه TP3 (استاپ روی TP2)"
+                reason = "رسیدن به TP2 (استاپ روی ۵۰٪ راه TP2)"
 
         elif stage == 6:
-            if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
-                new_sl = half3
+            if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
+                new_sl = tp2
                 t["current_stage"] = 7
-                reason = "رسیدن به TP3 (استاپ روی ۵۰٪ راه TP3)"
+                reason = "۵۰٪ راه TP3 (استاپ روی TP2)"
 
         elif stage == 7:
-            if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
-                new_sl = tp3
+            if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
+                new_sl = half3
                 t["current_stage"] = 8
-                reason = "۵۰٪ راه TP4 (استاپ روی TP3)"
+                reason = "رسیدن به TP3 (استاپ روی ۵۰٪ راه TP3)"
 
         elif stage == 8:
-            if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
-                new_sl = half4
+            if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
+                new_sl = tp3
                 t["current_stage"] = 9
-                reason = "رسیدن به TP4 (استاپ روی ۵۰٪ راه TP4)"
+                reason = "۵۰٪ راه TP4 (استاپ روی TP3)"
 
         elif stage == 9:
+            if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
+                new_sl = half4
+                t["current_stage"] = 10
+                reason = "رسیدن به TP4 (استاپ روی ۵۰٪ راه TP4)"
+
+        elif stage == 10:
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
                 dist_ext = abs(tp4 - tp3)
                 new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
                 new_sl = tp3
                 t["tp4"] = new_tp
-                t["current_stage"] = 10
+                t["current_stage"] = 11
                 reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {new_tp:.4f}"
 
-        elif stage >= 10:
+        elif stage >= 11:
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
                 dist_ext = abs(tp4 - tp3)
                 new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
