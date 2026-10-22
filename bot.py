@@ -100,7 +100,7 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ROI 10% و 20%) شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (خواندن مستقیم ROI) شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
@@ -141,31 +141,44 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        # 🌟 محاسبه اهرم برای پیدا کردن قیمت ROI
-        leverage = float(pos.get("leverage") or 1)
-        if leverage <= 1:
-            # اگر صرافی اهرم نداد، از تقسیم سایز بر مارجین حساب می‌کنیم
-            size = float(pos.get("size") or 1)
-            margin = float(pos.get("margin") or 1)
-            leverage = size / margin if margin > 0 else 1
-
-        # قیمت‌هایی که معادل ۱۰٪ و ۲۰٪ سود (ROI) هستند
-        roi_10_price = entry + (entry * 0.10 / leverage) if is_long else entry - (entry * 0.10 / leverage)
-        roi_20_price = entry + (entry * 0.20 / leverage) if is_long else entry - (entry * 0.20 / leverage)
+        # 🌟 سیستم خواندن مستقیم ROI (دقیقاً مثل صفحه صرافی)
+        # اول چک می‌کنیم ببینیم صرافی فیلد roi یا roe رو میده یا نه
+        direct_roi = pos.get("roi") or pos.get("roe")
         
-        print(f"Checking {pos_key} | Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp} | Lev: {leverage}")
+        if direct_roi is not None:
+            current_roi = float(direct_roi)
+            # گاهی صرافی درصد رو به صورت اعشار (0.11) میده، گاهی عدد صحیح (11.0)
+            if current_roi < 1.5 and current_roi > -1.5 and current_roi != 0: 
+                current_roi = current_roi * 100
+        else:
+            # اگه صرافی فیلد مستقیم نداد، خودمون با سود دلاری و مارجین حساب می‌کنیم
+            pnl = float(pos.get("unrealizedPnl") or 0)
+            margin = float(pos.get("margin") or 0.01) # جلوگیری از تقسیم بر صفر
+            current_roi = (pnl / margin) * 100
+
+        # قیمتی که معادل ۱۰ درصد رول است
+        price_10_roi = entry
+        if current_price != entry:
+            pnl_total = float(pos.get("unrealizedPnl") or 0)
+            qty = abs(pnl_total / (current_price - entry)) if (current_price - entry) != 0 else 0
+            if qty > 0:
+                target_pnl = float(pos.get("margin") or 1) * 0.10
+                price_10_roi = entry + (target_pnl / qty) if is_long else entry - (target_pnl / qty)
+        
+        # چاپ تمام اطلاعات مهم برای دیباگ در گیت‌هاب
+        print(f"--- {pos_key} ---")
+        print(f"ROI Calculated: {current_roi:.2f}% | PnL: {pos.get('unrealizedPnl')} | Margin: {pos.get('margin')}")
+        print(f"Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
 
         # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
-            print(f"SL is 0. Fixing to {sl}...")
             tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
         # 🔄 سیستم همگام‌سازی
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
-            print(f"Syncing SL: Exchange {current_sl} != Command {sl}...")
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if fix_status in [200, 201]:
@@ -174,7 +187,6 @@ def manage_positions(state):
 
         # 🛠️ اصلاح تی‌پی دستی
         if t.get("current_stage", 0) < 11 and abs(current_tp - tp4) > 0.00001:
-            print(f"Fixing TP: Exchange {current_tp} != Command {tp4}...")
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if fix_status in [200, 201]:
@@ -187,12 +199,10 @@ def manage_positions(state):
         dist3 = abs(tp3 - tp2)
         dist4 = abs(tp4 - tp3)
 
-        # محاسبه نقاط کلیدی
         if is_long:
             tp1_70 = entry + (dist1 * 0.70)
             tp1_40 = entry + (dist1 * 0.40)
             tp1_80 = entry + (dist1 * 0.80)
-            
             half2 = tp1 + (dist2 * 0.5)
             half3 = tp2 + (dist3 * 0.5)
             half4 = tp3 + (dist4 * 0.5)
@@ -200,7 +210,6 @@ def manage_positions(state):
             tp1_70 = entry - (dist1 * 0.70)
             tp1_40 = entry - (dist1 * 0.40)
             tp1_80 = entry - (dist1 * 0.80)
-            
             half2 = tp1 - (dist2 * 0.5)
             half3 = tp2 - (dist3 * 0.5)
             half4 = tp3 - (dist4 * 0.5)
@@ -210,16 +219,16 @@ def manage_positions(state):
 
         # --- منطق جدید پله‌ای ---
         if stage == 0:
-            if (is_long and current_price >= roi_10_price) or (not is_long and current_price <= roi_10_price):
+            if current_roi >= 10.0:
                 new_sl = entry
                 t["current_stage"] = 1
-                reason = "۱۰٪ رول (ریسک‌فری / استاپ روی نقطه ورود)"
+                reason = f"۱۰٪ رول (ریسک‌فری / استاپ روی نقطه ورود) | ROI: {current_roi:.2f}%"
 
         elif stage == 1:
-            if (is_long and current_price >= roi_20_price) or (not is_long and current_price <= roi_20_price):
-                new_sl = roi_10_price
+            if current_roi >= 20.0:
+                new_sl = price_10_roi
                 t["current_stage"] = 2
-                reason = "۲۰٪ رول (استاپ روی قیمت ۱۰٪ رول)"
+                reason = f"۲۰٪ رول (استاپ روی قیمت ۱۰٪ رول) | ROI: {current_roi:.2f}%"
 
         elif stage == 2:
             if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
@@ -282,7 +291,7 @@ def manage_positions(state):
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
                 dist_ext = abs(tp4 - tp3)
                 new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
-                new_sl = t["tp4"] # استاپ روی تارگت قبلی
+                new_sl = t["tp4"]
                 t["tp4"] = new_tp
                 t["current_stage"] = stage + 1
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {new_sl:.4f}، تارگت جدید: {new_tp:.4f}"
