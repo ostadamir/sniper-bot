@@ -100,11 +100,11 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق ۱۰ مرحله‌ای مدیریتش رو شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ریسک‌فری زودهنگام) شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
-# ================= منطق پله‌ای ۱۰ مرحله‌ای =================
+# ================= منطق پله‌ای =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): 
@@ -151,7 +151,7 @@ def manage_positions(state):
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key}!</b>\nاستاپ لاس پاک شده بود، ربات آن را به {sl} برگرداند.")
 
-        # 🔄 سیستم همگام‌سازی: اگر در مرحله 0 هستیم و استاپ با کامند فرق دارد
+        # 🔄 سیستم همگام‌سازی
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
             print(f"Syncing SL: Exchange {current_sl} != Command {sl}...")
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
@@ -160,7 +160,7 @@ def manage_positions(state):
                 send_telegram(f"🔄 <b>همگام‌سازی {pos_key}</b>\nاستاپ لاس جدید ({sl}) از کامند شما اعمال شد.")
             current_sl = sl
 
-        # 🛠️ سیستم اصلاح تی‌پی: تا قبل از مرحله 9، تی‌پی باید TP4 باشه
+        # 🛠️ اصلاح تی‌پی دستی
         if t.get("current_stage", 0) < 9 and abs(current_tp - tp4) > 0.00001:
             print(f"Fixing TP: Exchange {current_tp} != Command {tp4}...")
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
@@ -175,18 +175,22 @@ def manage_positions(state):
         dist3 = abs(tp3 - tp2)
         dist4 = abs(tp4 - tp3)
 
-        # محاسبه نقاط کلیدی
+        # محاسبه نقاط کلیدی بر اساس درصدهای جدید
         if is_long:
-            half1 = entry + (dist1 * 0.5)
-            per80_1 = entry + (dist1 * 0.8)
-            per40_1 = entry + (dist1 * 0.4)
+            trigger_rf = entry + (dist1 * 0.65) # ۶۵ درصد راه (۳۵ درصد مونده)
+            trigger_70 = entry + (dist1 * 0.70) # ۷۰ درصد راه
+            sl_30 = entry + (dist1 * 0.30)      # ۳۰ درصد راه
+            per80_1 = entry + (dist1 * 0.80)    # ۸۰ درصد راه (برای بعد از TP1)
+            
             half2 = tp1 + (dist2 * 0.5)
             half3 = tp2 + (dist3 * 0.5)
             half4 = tp3 + (dist4 * 0.5)
         else:
-            half1 = entry - (dist1 * 0.5)
-            per80_1 = entry - (dist1 * 0.8)
-            per40_1 = entry - (dist1 * 0.4)
+            trigger_rf = entry - (dist1 * 0.65)
+            trigger_70 = entry - (dist1 * 0.70)
+            sl_30 = entry - (dist1 * 0.30)
+            per80_1 = entry - (dist1 * 0.80)
+            
             half2 = tp1 - (dist2 * 0.5)
             half3 = tp2 - (dist3 * 0.5)
             half4 = tp3 - (dist4 * 0.5)
@@ -194,18 +198,18 @@ def manage_positions(state):
         new_sl, new_tp, reason = current_sl, current_tp, "" 
         stage = t.get("current_stage", 0)
 
-        # --- منطق ۱۰ مرحله‌ای ---
+        # --- منطق پله‌ای ---
         if stage == 0:
-            if (is_long and current_price >= half1) or (not is_long and current_price <= half1):
+            if (is_long and current_price >= trigger_rf) or (not is_long and current_price <= trigger_rf):
                 new_sl = entry
                 t["current_stage"] = 1
-                reason = "۵۰٪ راه TP1 (ریسک‌فری / استاپ روی نقطه ورود)"
+                reason = "۶۵٪ راه TP1 (ریسک‌فری / استاپ روی نقطه ورود)"
 
         elif stage == 1:
-            if (is_long and current_price >= per80_1) or (not is_long and current_price <= per80_1):
-                new_sl = per40_1
+            if (is_long and current_price >= trigger_70) or (not is_long and current_price <= trigger_70):
+                new_sl = sl_30
                 t["current_stage"] = 2
-                reason = "۸۰٪ راه TP1 (استاپ روی ۴۰٪ راه TP1)"
+                reason = "۷۰٪ راه TP1 (استاپ روی ۳۰٪ راه TP1)"
 
         elif stage == 2:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
