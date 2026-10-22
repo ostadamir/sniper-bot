@@ -100,7 +100,7 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (خواندن مستقیم ROI) شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
@@ -124,6 +124,11 @@ def manage_positions(state):
         pos_key = f"{symbol}_{side}"
         open_keys.add(pos_key)
         
+        # 🌟 چاپ کل اطلاعات خام پوزیشن برای پیدا کردن اسم دقیق فیلدها
+        print(f"--- RAW POSITION DATA: {symbol} ---")
+        print(pos) 
+        print("------------------------------------")
+
         if pos_key not in state["targets"]: continue
         t = state["targets"][pos_key]
         if t.get("closed", False): continue
@@ -141,22 +146,17 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        # 🌟 سیستم خواندن مستقیم ROI (دقیقاً مثل صفحه صرافی)
-        # اول چک می‌کنیم ببینیم صرافی فیلد roi یا roe رو میده یا نه
+        # محاسبه ROI (فعلا همون قبلیه، بعد از دیدن لاگ درستش می‌کنیم)
         direct_roi = pos.get("roi") or pos.get("roe")
-        
         if direct_roi is not None:
             current_roi = float(direct_roi)
-            # گاهی صرافی درصد رو به صورت اعشار (0.11) میده، گاهی عدد صحیح (11.0)
             if current_roi < 1.5 and current_roi > -1.5 and current_roi != 0: 
                 current_roi = current_roi * 100
         else:
-            # اگه صرافی فیلد مستقیم نداد، خودمون با سود دلاری و مارجین حساب می‌کنیم
             pnl = float(pos.get("unrealizedPnl") or 0)
-            margin = float(pos.get("margin") or 0.01) # جلوگیری از تقسیم بر صفر
+            margin = float(pos.get("margin") or 0.01)
             current_roi = (pnl / margin) * 100
 
-        # قیمتی که معادل ۱۰ درصد رول است
         price_10_roi = entry
         if current_price != entry:
             pnl_total = float(pos.get("unrealizedPnl") or 0)
@@ -165,10 +165,7 @@ def manage_positions(state):
                 target_pnl = float(pos.get("margin") or 1) * 0.10
                 price_10_roi = entry + (target_pnl / qty) if is_long else entry - (target_pnl / qty)
         
-        # چاپ تمام اطلاعات مهم برای دیباگ در گیت‌هاب
-        print(f"--- {pos_key} ---")
-        print(f"ROI Calculated: {current_roi:.2f}% | PnL: {pos.get('unrealizedPnl')} | Margin: {pos.get('margin')}")
-        print(f"Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
+        print(f"Checking {pos_key} | Stage: {t.get('current_stage', 0)} | Price: {current_price} | SL: {current_sl} | TP: {current_tp}")
 
         # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
@@ -193,7 +190,6 @@ def manage_positions(state):
                 send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key}</b>\nتی‌پی دستی شما شناسایی و به تارگت نهایی ({tp4}) تغییر کرد.")
             current_tp = tp4
 
-        # 🌟 محاسبات فواصل قیمتی
         dist1 = abs(tp1 - entry)
         dist2 = abs(tp2 - tp1)
         dist3 = abs(tp3 - tp2)
@@ -217,66 +213,65 @@ def manage_positions(state):
         new_sl, new_tp, reason = current_sl, current_tp, "" 
         stage = t.get("current_stage", 0)
 
-        # --- منطق جدید پله‌ای ---
         if stage == 0:
             if current_roi >= 10.0:
                 new_sl = entry
                 t["current_stage"] = 1
-                reason = f"۱۰٪ رول (ریسک‌فری / استاپ روی نقطه ورود) | ROI: {current_roi:.2f}%"
+                reason = f"۱۰٪ رول (ریسک‌فری) | ROI: {current_roi:.2f}%"
 
         elif stage == 1:
             if current_roi >= 20.0:
                 new_sl = price_10_roi
                 t["current_stage"] = 2
-                reason = f"۲۰٪ رول (استاپ روی قیمت ۱۰٪ رول) | ROI: {current_roi:.2f}%"
+                reason = f"۲۰٪ رول (استاپ روی ۱۰٪ رول) | ROI: {current_roi:.2f}%"
 
         elif stage == 2:
             if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
                 new_sl = tp1_40
                 t["current_stage"] = 3
-                reason = "۷۰٪ راه TP1 (استاپ روی ۴۰٪ راه TP1)"
+                reason = "۷۰٪ راه TP1"
 
         elif stage == 3:
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 new_sl = tp1_80
                 t["current_stage"] = 4
-                reason = "رسیدن به TP1 (استاپ روی ۸۰٪ راه TP1)"
+                reason = "رسیدن به TP1"
 
         elif stage == 4:
             if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
                 new_sl = tp1
                 t["current_stage"] = 5
-                reason = "۵۰٪ راه TP2 (استاپ روی TP1)"
+                reason = "۵۰٪ راه TP2"
 
         elif stage == 5:
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = half2
                 t["current_stage"] = 6
-                reason = "رسیدن به TP2 (استاپ روی ۵۰٪ راه TP2)"
+                reason = "رسیدن به TP2"
 
         elif stage == 6:
             if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
                 new_sl = tp2
                 t["current_stage"] = 7
-                reason = "۵۰٪ راه TP3 (استاپ روی TP2)"
+                reason = "۵۰٪ راه TP3"
 
         elif stage == 7:
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = half3
                 t["current_stage"] = 8
-                reason = "رسیدن به TP3 (استاپ روی ۵۰٪ راه TP3)"
+                reason = "رسیدن به TP3"
 
         elif stage == 8:
             if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
                 new_sl = tp3
                 t["current_stage"] = 9
-                reason = "۵۰٪ راه TP4 (استاپ روی TP3)"
+                reason = "۵۰٪ راه TP4"
 
         elif stage == 9:
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
                 new_sl = half4
                 t["current_stage"] = 10
-                reason = "رسیدن به TP4 (استاپ روی ۵۰٪ راه TP4)"
+                reason = "رسیدن به TP4"
 
         elif stage == 10:
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
@@ -285,7 +280,7 @@ def manage_positions(state):
                 new_sl = tp3
                 t["tp4"] = new_tp
                 t["current_stage"] = 11
-                reason = f"🚀 تمدید تارگت! استاپ روی TP3، تارگت جدید: {new_tp:.4f}"
+                reason = f"تمدید تارگت! تارگت جدید: {new_tp:.4f}"
 
         elif stage >= 11:
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
@@ -294,21 +289,14 @@ def manage_positions(state):
                 new_sl = t["tp4"]
                 t["tp4"] = new_tp
                 t["current_stage"] = stage + 1
-                reason = f"🚀 تمدید مجدد تارگت! استاپ روی {new_sl:.4f}، تارگت جدید: {new_tp:.4f}"
+                reason = f"تمدید مجدد تارگت! تارگت جدید: {new_tp:.4f}"
 
-        # 🌟 اجرای تغییرات در صرافی
         if reason:
-            payload = {
-                "stopLoss": str(round(new_sl, 6)),
-                "takeProfit": str(round(new_tp, 6))
-            }
-            print(f"Executing Stage Change: {reason} | New SL: {new_sl} | New TP: {new_tp}")
-            
+            payload = {"stopLoss": str(round(new_sl, 6)), "takeProfit": str(round(new_tp, 6))}
             p_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
-    # پاکسازی پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
