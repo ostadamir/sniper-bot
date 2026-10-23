@@ -48,7 +48,7 @@ def load_state():
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
                 state.setdefault("targets", {})
-                state.setdefault("pending", {}) # اتاق انتظار سیگنال‌ها
+                state.setdefault("pending", {})
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
@@ -78,11 +78,9 @@ def check_telegram(state):
                         if len(parts) == 3:
                             symbol = parts[1].upper().replace("USDT", "")
                             side = parts[2].upper()
-                            # لغو از لیست مدیریت شده‌ها
                             for k in list(state["targets"].keys()):
                                 if f"{symbol}_{side}" in k:
                                     del state["targets"][k]
-                            # لغو از اتاق انتظار
                             pos_key = f"{symbol}_{side}"
                             if pos_key in state["pending"]:
                                 del state["pending"][pos_key]
@@ -95,17 +93,28 @@ def check_telegram(state):
                             side, entry, sl, tp1, tp2, tp3, tp4 = parts[2:]
                             pos_key = f"{symbol}_{side.upper()}"
                             
-                            # سیگنال جدید رو می‌فرستیم به اتاق انتظار
-                            if pos_key not in state["pending"]:
-                                state["pending"][pos_key] = []
-                            
-                            state["pending"][pos_key].append({
+                            new_sig = {
                                 "entry": float(entry), "sl": float(sl),
                                 "tp1": float(tp1), "tp2": float(tp2), "tp3": float(tp3), "tp4": float(tp4),
                                 "current_stage": 0,
                                 "closed": False
-                            })
-                            send_telegram(f"✅ سیگنال {pos_key} در اتاق انتظار ثبت شد.\nربات به محض دیدن پوزیشن باز، آن را مدیریت می‌کند.")
+                            }
+
+                            # 🌟 سیستم ضد تکرار (Anti-Duplicate)
+                            is_duplicate = False
+                            if pos_key in state["pending"]:
+                                for existing in state["pending"][pos_key]:
+                                    if existing["entry"] == new_sig["entry"] and existing["sl"] == new_sig["sl"]:
+                                        is_duplicate = True
+                                        break
+                            
+                            if not is_duplicate:
+                                if pos_key not in state["pending"]:
+                                    state["pending"][pos_key] = []
+                                state["pending"][pos_key].append(new_sig)
+                                send_telegram(f"✅ سیگنال {pos_key} در اتاق انتظار ثبت شد.")
+                            else:
+                                print(f"⚠️ Duplicate signal ignored for {pos_key}")
     except Exception as e:
         print("TG Error:", e)
 
@@ -123,18 +132,16 @@ def manage_positions(state):
     open_keys = set()
     
     for pos in open_positions:
-        pos_id_str = str(pos['id']) # استفاده از شناسه یکتای صرافی
+        pos_id_str = str(pos['id']) 
         symbol = pos["symbol"].replace("USDT", "")
         side = pos["side"]
         pos_key_base = f"{symbol}_{side}"
         
         open_keys.add(pos_id_str)
         
-        # 🌟 جادوی جدید: اگر پوزیشن جدیدی باز شده که تو لیست ما نیست، از اتاق انتظار برش دار
         if pos_id_str not in state["targets"]:
             if pos_key_base in state["pending"] and len(state["pending"][pos_key_base]) > 0:
                 exchange_entry = float(pos.get("entryPrice") or 0)
-                # پیدا کردن نزدیک‌ترین سیگنال از نظر قیمت ورود
                 best_match_idx = 0
                 min_diff = float('inf')
                 for idx, sig in enumerate(state["pending"][pos_key_base]):
@@ -143,7 +150,6 @@ def manage_positions(state):
                         min_diff = diff
                         best_match_idx = idx
                 
-                # انتقال از اتاق انتظار به لیست مدیریت
                 matched_signal = state["pending"][pos_key_base].pop(best_match_idx)
                 if len(state["pending"][pos_key_base]) == 0:
                     del state["pending"][pos_key_base]
@@ -181,14 +187,12 @@ def manage_positions(state):
         
         print(f"Checking {pos_key_base} ({pos_id_str}) | Stage: {t.get('current_stage', 0)} | ROI: {current_roi:.2f}%")
 
-        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس در صورت پاک شدن
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_sl = sl
             send_telegram(f"🛡️ <b>نجات {pos_key_base}!</b>\nاستاپ لاس پاک شده بود، ربات آن را برگرداند.")
 
-        # 🔄 سیستم همگام‌سازی
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
@@ -196,7 +200,6 @@ def manage_positions(state):
                 send_telegram(f"🔄 <b>همگام‌سازی {pos_key_base}</b>\nاستاپ لاس جدید از کامند اعمال شد.")
             current_sl = sl
 
-        # 🛠️ اصلاح تی‌پی دستی
         if t.get("current_stage", 0) < 11 and abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
@@ -204,7 +207,6 @@ def manage_positions(state):
                 send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key_base}</b>\nتی‌پی به تارگت نهایی تغییر کرد.")
             current_tp = tp4
 
-        # 🌟 محاسبات فواصل قیمتی
         dist1 = abs(tp1 - entry)
         dist2 = abs(tp2 - tp1)
         dist3 = abs(tp3 - tp2)
@@ -228,7 +230,6 @@ def manage_positions(state):
         new_sl, new_tp, reason = current_sl, current_tp, "" 
         stage = t.get("current_stage", 0)
 
-        # منطق پله‌ای
         if stage == 0:
             if current_roi >= 10.0:
                 new_sl = entry
@@ -302,7 +303,6 @@ def manage_positions(state):
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key_base}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
-    # پاکسازی پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
