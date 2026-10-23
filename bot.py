@@ -25,7 +25,6 @@ def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
 
 def tt_request(method, uri, payload=None):
     if not TRUETRADE_KEY or not TRUETRADE_SECRET:
-        print("🚨 ERROR: TrueTrade API Keys are missing!")
         return 500, {}
         
     timestamp = str(int(time.time() * 1000))
@@ -37,10 +36,6 @@ def tt_request(method, uri, payload=None):
         elif method == "PATCH":
             res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
         
-        print(f"TT API [{method}] {uri} -> Status: {res.status_code}")
-        if res.status_code not in [200, 201]:
-            print(f"TT API Error Response: {res.text}")
-            
         return res.status_code, res.json() if res.text else {}
     except Exception as e:
         print("TT API Exception:", e)
@@ -69,7 +64,6 @@ def check_telegram(state):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         r = requests.get(url, params={"offset": offset, "timeout": 5}, timeout=10).json()
-        print("Telegram Response:", r)
         
         if r.get("ok"):
             for u in r.get("result", []):
@@ -100,7 +94,7 @@ def check_telegram(state):
                                 "current_stage": 0,
                                 "closed": False
                             }
-                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات با منطق جدید (ROI دقیق) شروع کرد.")
+                            send_telegram(f"✅ سیگنال {pos_key} ثبت شد.\nربات مدیریتش رو شروع کرد.")
     except Exception as e:
         print("TG Error:", e)
 
@@ -108,13 +102,12 @@ def check_telegram(state):
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): 
-        print("Failed to get positions from TrueTrade. Check API keys.")
+        print("Failed to get positions from TrueTrade.")
         return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
-    
-    print(f"Found {len(open_positions)} open positions on exchange.")
+    closed_positions = [p for p in items if p.get("status") == "CLOSED"] # 🌟 گرفتن لیست بسته شده‌ها
     
     open_keys = set()
     
@@ -141,16 +134,12 @@ def manage_positions(state):
         tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
-        # 🌟 خواندن دقیق فیلدهای صرافی (با P و L بزرگ و initialMargin)
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0.01) 
         size = float(pos.get("size") or 0)
         
-        # محاسبه دقیق درصد سود روی مارجین (ROI)
         current_roi = (pnl / margin) * 100
 
-        # محاسبه قیمتی که دقیقاً معادل ۱۰٪ سود (ROI) است
-        # برای این کار به حجم پوزیشن (size) نیاز داریم
         price_10_roi = entry
         if size > 0:
             target_pnl_10 = margin * 0.10
@@ -279,28 +268,53 @@ def manage_positions(state):
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
                 dist_ext = abs(tp4 - tp3)
                 new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
-                new_sl = t["tp4"] # استاپ روی تارگت قبلی
+                new_sl = t["tp4"]
                 t["tp4"] = new_tp
                 t["current_stage"] = stage + 1
                 reason = f"🚀 تمدید مجدد تارگت! استاپ روی {new_sl:.4f}، تارگت جدید: {new_tp:.4f}"
 
-        # 🌟 اجرای تغییرات در صرافی
         if reason:
-            payload = {
-                "stopLoss": str(round(new_sl, 6)),
-                "takeProfit": str(round(new_tp, 6))
-            }
-            print(f"Executing Stage Change: {reason} | New SL: {new_sl} | New TP: {new_tp}")
-            
+            payload = {"stopLoss": str(round(new_sl, 6)), "takeProfit": str(round(new_tp, 6))}
             p_status, _ = tt_request("PATCH", f"/futures/positions/{pos['id']}/tpsl", payload)
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
-    # پاکسازی پوزیشن‌های بسته شده
+    # 🌟 پاکسازی و گزارش کامل پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             state["targets"][key]["closed"] = True
-            send_telegram(f"🏁 <b>پوزیشن {key} بسته شد</b>")
+            
+            # پیدا کردن مشخصات پوزیشن بسته شده از لیست صرافی
+            symbol = key.split("_")[0] + "USDT"
+            side = key.split("_")[1]
+            
+            matching_closed = [p for p in closed_positions if p.get("symbol") == symbol and p.get("side") == side]
+            
+            pnl_text = "نامشخص"
+            reason_text = "نامشخص"
+            
+            if matching_closed:
+                # مرتب سازی بر اساس زمان آپدیت (جدیدترین اول) برای پیدا کردن پوزیشن درست
+                matching_closed.sort(key=lambda x: x.get("updatedAt", ""), reverse=True)
+                last_closed = matching_closed[0]
+                
+                # خواندن سود/ضرر واقعی و دلیل بسته شدن
+                realized_pnl = float(last_closed.get("realizedPnL") or last_closed.get("pnl") or 0)
+                closing_reason = last_closed.get("closingReason") or last_closed.get("reason") or ""
+                
+                pnl_text = f"{realized_pnl:+.2f} USDT"
+                
+                reasons = {
+                    "STOPLOSS": "حد ضرر (Stop Loss)",
+                    "TAKEPROFIT": "حد سود (Take Profit)",
+                    "MANUAL": "دستی (Manual)"
+                }
+                reason_text = reasons.get(closing_reason, closing_reason if closing_reason else "نامشخص")
+                
+            send_telegram(f"🏁 <b>پوزیشن {key} بسته شد</b>\n"
+                          f"دلیل: {reason_text}\n"
+                          f"سود/ضرر: {pnl_text}\n"
+                          f"از لیست خارج شد.")
 
 def run():
     print("Checking...")
