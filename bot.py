@@ -100,7 +100,7 @@ def check_telegram(state):
                                 "closed": False
                             }
 
-                            # 🌟 سیستم ضد تکرار (Anti-Duplicate)
+                            # سیستم ضد تکرار (Anti-Duplicate)
                             is_duplicate = False
                             if pos_key in state["pending"]:
                                 for existing in state["pending"][pos_key]:
@@ -139,18 +139,11 @@ def manage_positions(state):
         
         open_keys.add(pos_id_str)
         
+        # 🌟 جادوی جدید: تطبیق بر اساس ترتیب (اولین سیگنال به اولین پوزیشن باز شده)
         if pos_id_str not in state["targets"]:
             if pos_key_base in state["pending"] and len(state["pending"][pos_key_base]) > 0:
-                exchange_entry = float(pos.get("entryPrice") or 0)
-                best_match_idx = 0
-                min_diff = float('inf')
-                for idx, sig in enumerate(state["pending"][pos_key_base]):
-                    diff = abs(sig["entry"] - exchange_entry)
-                    if diff < min_diff:
-                        min_diff = diff
-                        best_match_idx = idx
-                
-                matched_signal = state["pending"][pos_key_base].pop(best_match_idx)
+                # گرفتن اولین سیگنال از لیست انتظار (FIFO)
+                matched_signal = state["pending"][pos_key_base].pop(0)
                 if len(state["pending"][pos_key_base]) == 0:
                     del state["pending"][pos_key_base]
                     
@@ -165,6 +158,7 @@ def manage_positions(state):
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
         
+        # 🌟 همیشه قیمت واقعی صرافی رو برای محاسبات استفاده کن
         exchange_entry = float(pos.get("entryPrice") or 0)
         if exchange_entry > 0:
             t["entry"] = exchange_entry
@@ -185,7 +179,7 @@ def manage_positions(state):
             target_pnl_10 = margin * 0.10
             price_10_roi = entry + (target_pnl_10 / size) if is_long else entry - (target_pnl_10 / size)
         
-        print(f"Checking {pos_key_base} ({pos_id_str}) | Stage: {t.get('current_stage', 0)} | ROI: {current_roi:.2f}%")
+        print(f"Checking {pos_key_base} ({pos_id_str}) | Stage: {t.get('current_stage', 0)} | ROI: {current_roi:.2f}% | Entry: {entry}")
 
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
