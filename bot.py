@@ -124,7 +124,7 @@ def manage_positions(state):
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     
-    # 🌟🌟🌟 این خط جادویی جدید است: مرتب‌سازی پوزیشن‌ها از قدیمی‌ترین به جدیدترین 🌟🌟🌟
+    # مرتب‌سازی بر اساس زمان ایجاد
     open_positions.sort(key=lambda p: p.get("createdAt", ""))
     
     print(f"Found {len(open_positions)} open positions on exchange (sorted by time).")
@@ -146,10 +146,8 @@ def manage_positions(state):
                     del state["pending"][pos_key_base]
                     
                 state["targets"][pos_id_str] = matched_signal
-                
-                # خواندن زمان ایجاد پوزیشن برای لاگ
                 created_at = pos.get("createdAt", "Unknown Time")
-                send_telegram(f"🔗 <b>اتصال موفق!</b>\nپوزیشن {pos_key_base} (زمان باز شدن: {created_at})\nبا شناسه {pos_id_str} به سیگنال شما متصل شد.")
+                send_telegram(f"🔗 <b>اتصال موفق!</b>\nپوزیشن {pos_key_base} (زمان: {created_at})\nبا شناسه {pos_id_str} به سیگنال متصل شد.")
 
         if pos_id_str not in state["targets"]: continue
         t = state["targets"][pos_id_str]
@@ -297,10 +295,17 @@ def manage_positions(state):
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key_base}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
+    # 🌟🌟🌟 سیستم جاروبرقی (Auto-Cleanup) 🌟🌟🌟
+    # پاک کردن کامل پوزیشن‌های بسته شده از حافظه
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
+            # علامت زدن که یکبار پیام بده
             state["targets"][key]["closed"] = True
             send_telegram(f"🏁 <b>پوزیشن با شناسه {key} بسته شد</b>")
+            
+            # حذف کامل از دیکشنری
+            del state["targets"][key]
+            print(f"Deleted closed position {key} from memory.")
 
 def run():
     print("Checking...")
