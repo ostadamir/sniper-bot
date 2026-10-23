@@ -100,7 +100,6 @@ def check_telegram(state):
                                 "closed": False
                             }
 
-                            # سیستم ضد تکرار (Anti-Duplicate)
                             is_duplicate = False
                             if pos_key in state["pending"]:
                                 for existing in state["pending"][pos_key]:
@@ -113,8 +112,6 @@ def check_telegram(state):
                                     state["pending"][pos_key] = []
                                 state["pending"][pos_key].append(new_sig)
                                 send_telegram(f"✅ سیگنال {pos_key} در اتاق انتظار ثبت شد.")
-                            else:
-                                print(f"⚠️ Duplicate signal ignored for {pos_key}")
     except Exception as e:
         print("TG Error:", e)
 
@@ -127,7 +124,10 @@ def manage_positions(state):
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     
-    print(f"Found {len(open_positions)} open positions on exchange.")
+    # 🌟🌟🌟 این خط جادویی جدید است: مرتب‌سازی پوزیشن‌ها از قدیمی‌ترین به جدیدترین 🌟🌟🌟
+    open_positions.sort(key=lambda p: p.get("createdAt", ""))
+    
+    print(f"Found {len(open_positions)} open positions on exchange (sorted by time).")
     
     open_keys = set()
     
@@ -139,16 +139,17 @@ def manage_positions(state):
         
         open_keys.add(pos_id_str)
         
-        # 🌟 جادوی جدید: تطبیق بر اساس ترتیب (اولین سیگنال به اولین پوزیشن باز شده)
         if pos_id_str not in state["targets"]:
             if pos_key_base in state["pending"] and len(state["pending"][pos_key_base]) > 0:
-                # گرفتن اولین سیگنال از لیست انتظار (FIFO)
                 matched_signal = state["pending"][pos_key_base].pop(0)
                 if len(state["pending"][pos_key_base]) == 0:
                     del state["pending"][pos_key_base]
                     
                 state["targets"][pos_id_str] = matched_signal
-                send_telegram(f"🔗 <b>اتصال موفق!</b>\nپوزیشن {pos_key_base} با شناسه {pos_id_str} به سیگنال شما متصل شد و مدیریت آغاز شد.")
+                
+                # خواندن زمان ایجاد پوزیشن برای لاگ
+                created_at = pos.get("createdAt", "Unknown Time")
+                send_telegram(f"🔗 <b>اتصال موفق!</b>\nپوزیشن {pos_key_base} (زمان باز شدن: {created_at})\nبا شناسه {pos_id_str} به سیگنال شما متصل شد.")
 
         if pos_id_str not in state["targets"]: continue
         t = state["targets"][pos_id_str]
@@ -158,7 +159,6 @@ def manage_positions(state):
         current_sl = float(pos.get("stopLoss") or 0)
         current_tp = float(pos.get("takeProfit") or 0)
         
-        # 🌟 همیشه قیمت واقعی صرافی رو برای محاسبات استفاده کن
         exchange_entry = float(pos.get("entryPrice") or 0)
         if exchange_entry > 0:
             t["entry"] = exchange_entry
@@ -179,7 +179,7 @@ def manage_positions(state):
             target_pnl_10 = margin * 0.10
             price_10_roi = entry + (target_pnl_10 / size) if is_long else entry - (target_pnl_10 / size)
         
-        print(f"Checking {pos_key_base} ({pos_id_str}) | Stage: {t.get('current_stage', 0)} | ROI: {current_roi:.2f}% | Entry: {entry}")
+        print(f"Checking {pos_key_base} ({pos_id_str}) | Stage: {t.get('current_stage', 0)} | ROI: {current_roi:.2f}%")
 
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
