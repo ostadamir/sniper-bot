@@ -18,7 +18,7 @@
             "tp3": 1.2639,
             "tp4": 1.2539,
             "current_stage": 1,
-            "closed": false
+            "closed": true
         },
         "SOL_LONG": {
             "entry": 104.66,
