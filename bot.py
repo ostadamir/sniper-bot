@@ -123,6 +123,7 @@ def manage_positions(state):
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
+    closed_positions = [p for p in items if p.get("status") == "CLOSED"] # 🌟 برگرداندن لیست بسته شده‌ها
     
     # مرتب‌سازی بر اساس زمان ایجاد
     open_positions.sort(key=lambda p: p.get("createdAt", ""))
@@ -295,13 +296,36 @@ def manage_positions(state):
             if p_status in [200, 201]:
                 send_telegram(f"🔄 <b>مدیریت {pos_key_base}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
 
-    # 🌟🌟🌟 سیستم جاروبرقی (Auto-Cleanup) 🌟🌟🌟
-    # پاک کردن کامل پوزیشن‌های بسته شده از حافظه
+    # 🌟🌟🌟 سیستم جاروبرقی + گزارش‌گیری کامل 🌟🌟🌟
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
-            # علامت زدن که یکبار پیام بده
+            
+            # پیدا کردن اطلاعات بسته شدن از لیست بسته شده‌های صرافی
+            matching_closed = [p for p in closed_positions if str(p.get("id")) == key]
+            
+            pnl_text = "نامشخص"
+            reason_text = "نامشخص"
+            
+            if matching_closed:
+                matching_closed.sort(key=lambda x: x.get("updatedAt", ""), reverse=True)
+                last_closed = matching_closed[0]
+                
+                realized_pnl = float(last_closed.get("realizedPnL") or 0)
+                closing_reason = last_closed.get("closingReason") or ""
+                
+                pnl_text = f"{realized_pnl:+.2f} USDT"
+                
+                reasons = {
+                    "STOPLOSS": "حد ضرر (Stop Loss)",
+                    "TAKEPROFIT": "حد سود (Take Profit)",
+                    "MANUAL": "دستی (Manual)"
+                }
+                reason_text = reasons.get(closing_reason, closing_reason if closing_reason else "نامشخص")
+
             state["targets"][key]["closed"] = True
-            send_telegram(f"🏁 <b>پوزیشن با شناسه {key} بسته شد</b>")
+            send_telegram(f"🏁 <b>پوزیشن با شناسه {key} بسته شد</b>\n"
+                          f"دلیل: {reason_text}\n"
+                          f"سود/ضرر: {pnl_text}")
             
             # حذف کامل از دیکشنری
             del state["targets"][key]
