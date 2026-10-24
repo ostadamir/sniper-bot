@@ -27,7 +27,7 @@
             "tp2": 2281.6,
             "tp3": 2263.7,
             "tp4": 2245.9,
-            "current_stage": 2,
+            "current_stage": 3,
             "closed": false
         },
         "2581557730": {
@@ -47,7 +47,7 @@
             "tp2": 8.6883,
             "tp3": 8.6204,
             "tp4": 8.5524,
-            "current_stage": 2,
+            "current_stage": 3,
             "closed": false
         },
         "2581560006": {
@@ -57,7 +57,7 @@
             "tp2": 98.176,
             "tp3": 97.409,
             "tp4": 96.641,
-            "current_stage": 2,
+            "current_stage": 3,
             "closed": false
         }
     },
