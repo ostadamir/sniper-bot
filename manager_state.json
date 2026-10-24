@@ -9,20 +9,10 @@
             "tp4": 0.309985,
             "current_stage": 0,
             "closed": false
-        },
-        "2581554462": {
-            "entry": 80705.3,
-            "sl": 83172.5,
-            "tp1": 78085.3,
-            "tp2": 77479.6,
-            "tp3": 76874.0,
-            "tp4": 76268.4,
-            "current_stage": 1,
-            "closed": false
         }
     },
     "pending": {},
     "offset": 209535437,
     "dashboard_id": 405,
-    "last_closed": "\ud83d\udd34 AVAX_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: +0.12 USDT"
+    "last_closed": "\ud83d\udd34 BTC_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.00 USDT"
 }
