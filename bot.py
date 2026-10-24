@@ -14,9 +14,24 @@ STATE_FILE = "manager_state.json"
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        return res.json().get("result", {}).get("message_id")
     except Exception as e:
-        print("TG Error:", e)
+        print("TG Send Error:", e)
+        return None
+
+def edit_telegram(message_id, text):
+    if not message_id: return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
+        # اگر پیام تغییری نکرده باشد، تلگرام ارور 400 میدهد که نادیده می‌گیریم
+        if res.status_code == 400 and "message is not modified" in res.text:
+            return True
+        return res.status_code == 200
+    except Exception as e:
+        print("TG Edit Error:", e)
+        return False
 
 # ================= ترودید =================
 def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
@@ -24,9 +39,7 @@ def tt_sign(secret: str, timestamp: str, method: str, uri: str) -> str:
     return hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()
 
 def tt_request(method, uri, payload=None):
-    if not TRUETRADE_KEY or not TRUETRADE_SECRET:
-        return 500, {}
-        
+    if not TRUETRADE_KEY or not TRUETRADE_SECRET: return 500, {}
     timestamp = str(int(time.time() * 1000))
     signature = tt_sign(TRUETRADE_SECRET, timestamp, method, uri)
     headers = {"X-API-Key": TRUETRADE_KEY, "X-Timestamp": timestamp, "X-Signature": signature, "Content-Type": "application/json"}
@@ -35,10 +48,8 @@ def tt_request(method, uri, payload=None):
             res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
         elif method == "PATCH":
             res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
-        
         return res.status_code, res.json() if res.text else {}
     except Exception as e:
-        print("TT API Exception:", e)
         return 500, str(e)
 
 # ================= حافظه =================
@@ -49,12 +60,14 @@ def load_state():
                 state = json.load(f)
                 state.setdefault("targets", {})
                 state.setdefault("pending", {})
+                state.setdefault("dashboard_id", None) # 🌟 آیدی پیام داشبورد
+                state.setdefault("last_closed", "هیچ پوزیشنی بسته نشده است.") # 🌟 آخرین پوزیشن بسته شده
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
                 return state
         except: pass
-    return {"targets": {}, "pending": {}, "offset": 0}
+    return {"targets": {}, "pending": {}, "offset": 0, "dashboard_id": None, "last_closed": "هیچ پوزیشنی بسته نشده است."}
 
 def save_state(state):
     with open(STATE_FILE, "w") as f:
@@ -66,7 +79,6 @@ def check_telegram(state):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
         r = requests.get(url, params={"offset": offset, "timeout": 5}, timeout=10).json()
-        
         if r.get("ok"):
             for u in r.get("result", []):
                 state["offset"] = u["update_id"] + 1
@@ -113,42 +125,51 @@ def check_telegram(state):
                                 state["pending"][pos_key].append(new_sig)
                                 send_telegram(f"✅ سیگنال {pos_key} در اتاق انتظار ثبت شد.")
     except Exception as e:
-        print("TG Error:", e)
+        print("TG Check Error:", e)
 
-# ================= منطق پله‌ای =================
+# ================= ابزارک نوار پیشرفت =================
+def get_progress_bar(current, entry, target):
+    if entry == target: return "░░░░░░░░░░"
+    if target > entry: # لانگ
+        pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
+    else: # شورت
+        pct = max(0.0, min(1.0, (entry - current) / (entry - target)))
+    filled = int(pct * 10)
+    return "█" * filled + "░" * (10 - filled)
+
+# ================= منطق اصلی و داشبورد =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
-    if status != 200 or not isinstance(response, dict): 
-        return
+    if status != 200 or not isinstance(response, dict): return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
-    closed_positions = [p for p in items if p.get("status") == "CLOSED"] # 🌟 برگرداندن لیست بسته شده‌ها
+    closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     
-    # مرتب‌سازی بر اساس زمان ایجاد
     open_positions.sort(key=lambda p: p.get("createdAt", ""))
-    
-    print(f"Found {len(open_positions)} open positions on exchange (sorted by time).")
-    
     open_keys = set()
+    
+    # متغیرها برای ساخت داشبورد
+    dashboard_parts = []
+    dashboard_parts.append("📊 <b>داشبورد مدیریت سرمایه (Ostad Signal)</b>\n━━━━━━━━━━━━━━━━━━━━━")
+    
+    total_pnl = 0.0
     
     for pos in open_positions:
         pos_id_str = str(pos['id']) 
         symbol = pos["symbol"].replace("USDT", "")
         side = pos["side"]
         pos_key_base = f"{symbol}_{side}"
-        
         open_keys.add(pos_id_str)
         
+        # تطبیق سیگنال‌های جدید
         if pos_id_str not in state["targets"]:
             if pos_key_base in state["pending"] and len(state["pending"][pos_key_base]) > 0:
                 matched_signal = state["pending"][pos_key_base].pop(0)
                 if len(state["pending"][pos_key_base]) == 0:
                     del state["pending"][pos_key_base]
-                    
                 state["targets"][pos_id_str] = matched_signal
-                created_at = pos.get("createdAt", "Unknown Time")
-                send_telegram(f"🔗 <b>اتصال موفق!</b>\nپوزیشن {pos_key_base} (زمان: {created_at})\nبا شناسه {pos_id_str} به سیگنال متصل شد.")
+                send_telegram(f"🔗 <b>اتصال موفق!</b>\nپوزیشن {pos_key_base} با شناسه {pos_id_str} به سیگنال متصل شد.")
 
         if pos_id_str not in state["targets"]: continue
         t = state["targets"][pos_id_str]
@@ -159,17 +180,17 @@ def manage_positions(state):
         current_tp = float(pos.get("takeProfit") or 0)
         
         exchange_entry = float(pos.get("entryPrice") or 0)
-        if exchange_entry > 0:
-            t["entry"] = exchange_entry
+        if exchange_entry > 0: t["entry"] = exchange_entry
             
         entry = t["entry"]
-        sl, tp1 = t["sl"], t["tp1"]
-        tp2, tp3, tp4 = t["tp2"], t["tp3"], t["tp4"]
+        sl, tp1, tp2, tp3, tp4 = t["sl"], t["tp1"], t["tp2"], t["tp3"], t["tp4"]
         is_long = (side == "LONG")
         
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0.01) 
         size = float(pos.get("size") or 0)
+        leverage = round(size / margin) if margin > 0 else 1
+        total_pnl += pnl
         
         current_roi = (pnl / margin) * 100
 
@@ -177,159 +198,154 @@ def manage_positions(state):
         if size > 0:
             target_pnl_10 = margin * 0.10
             price_10_roi = entry + (target_pnl_10 / size) if is_long else entry - (target_pnl_10 / size)
-        
-        print(f"Checking {pos_key_base} ({pos_id_str}) | Stage: {t.get('current_stage', 0)} | ROI: {current_roi:.2f}%")
 
+        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_sl = sl
-            send_telegram(f"🛡️ <b>نجات {pos_key_base}!</b>\nاستاپ لاس پاک شده بود، ربات آن را برگرداند.")
 
+        # 🔄 همگام‌سازی
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
-            fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
-            if fix_status in [200, 201]:
-                send_telegram(f"🔄 <b>همگام‌سازی {pos_key_base}</b>\nاستاپ لاس جدید از کامند اعمال شد.")
+            tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_sl = sl
 
+        # 🛠️ اصلاح تی‌پی
         if t.get("current_stage", 0) < 11 and abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
-            fix_status, _ = tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
-            if fix_status in [200, 201]:
-                send_telegram(f"🛠️ <b>اصلاح تی‌پی {pos_key_base}</b>\nتی‌پی به تارگت نهایی تغییر کرد.")
+            tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_tp = tp4
 
-        dist1 = abs(tp1 - entry)
-        dist2 = abs(tp2 - tp1)
-        dist3 = abs(tp3 - tp2)
-        dist4 = abs(tp4 - tp3)
-
+        dist1, dist2, dist3, dist4 = abs(tp1-entry), abs(tp2-tp1), abs(tp3-tp2), abs(tp4-tp3)
         if is_long:
-            tp1_70 = entry + (dist1 * 0.70)
-            tp1_40 = entry + (dist1 * 0.40)
-            tp1_80 = entry + (dist1 * 0.80)
-            half2 = tp1 + (dist2 * 0.5)
-            half3 = tp2 + (dist3 * 0.5)
-            half4 = tp3 + (dist4 * 0.5)
+            tp1_70, tp1_40, tp1_80 = entry+(dist1*0.7), entry+(dist1*0.4), entry+(dist1*0.8)
+            half2, half3, half4 = tp1+(dist2*0.5), tp2+(dist3*0.5), tp3+(dist4*0.5)
         else:
-            tp1_70 = entry - (dist1 * 0.70)
-            tp1_40 = entry - (dist1 * 0.40)
-            tp1_80 = entry - (dist1 * 0.80)
-            half2 = tp1 - (dist2 * 0.5)
-            half3 = tp2 - (dist3 * 0.5)
-            half4 = tp3 - (dist4 * 0.5)
+            tp1_70, tp1_40, tp1_80 = entry-(dist1*0.7), entry-(dist1*0.4), entry-(dist1*0.8)
+            half2, half3, half4 = tp1-(dist2*0.5), tp2-(dist3*0.5), tp3-(dist4*0.5)
 
-        new_sl, new_tp, reason = current_sl, current_tp, "" 
+        new_sl, new_tp, reason, status_text = current_sl, current_tp, "", ""
         stage = t.get("current_stage", 0)
-
+        
+        # منطق پله‌ای ۱۱ مرحله‌ای
         if stage == 0:
+            status_text = "منتظر ۱۰٪ رول ⏳"
             if current_roi >= 10.0:
-                new_sl = entry
-                t["current_stage"] = 1
-                reason = f"۱۰٪ رول (ریسک‌فری)"
+                new_sl = entry; t["current_stage"] = 1; reason = "ریسک‌فری"
         elif stage == 1:
+            status_text = "ریسک‌فری شده ✅"
             if current_roi >= 20.0:
-                new_sl = price_10_roi
-                t["current_stage"] = 2
-                reason = f"۲۰٪ رول (قفل سود ۱۰٪)"
+                new_sl = price_10_roi; t["current_stage"] = 2; reason = "قفل سود ۱۰٪"
         elif stage == 2:
+            status_text = "منتظر ۷۰٪ راه TP1"
             if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
-                new_sl = tp1_40
-                t["current_stage"] = 3
-                reason = "۷۰٪ راه TP1"
+                new_sl = tp1_40; t["current_stage"] = 3; reason = "۷۰٪ راه TP1"
         elif stage == 3:
+            status_text = "منتظر TP1"
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
-                new_sl = tp1_80
-                t["current_stage"] = 4
-                reason = "رسیدن به TP1"
+                new_sl = tp1_80; t["current_stage"] = 4; reason = "رسیدن به TP1"
         elif stage == 4:
+            status_text = "منتظر ۵۰٪ راه TP2"
             if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
-                new_sl = tp1
-                t["current_stage"] = 5
-                reason = "۵۰٪ راه TP2"
+                new_sl = tp1; t["current_stage"] = 5; reason = "۵۰٪ راه TP2"
         elif stage == 5:
+            status_text = "منتظر TP2"
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
-                new_sl = half2
-                t["current_stage"] = 6
-                reason = "رسیدن به TP2"
+                new_sl = half2; t["current_stage"] = 6; reason = "رسیدن به TP2"
         elif stage == 6:
+            status_text = "منتظر ۵۰٪ راه TP3"
             if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
-                new_sl = tp2
-                t["current_stage"] = 7
-                reason = "۵۰٪ راه TP3"
+                new_sl = tp2; t["current_stage"] = 7; reason = "۵۰٪ راه TP3"
         elif stage == 7:
+            status_text = "منتظر TP3"
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
-                new_sl = half3
-                t["current_stage"] = 8
-                reason = "رسیدن به TP3"
+                new_sl = half3; t["current_stage"] = 8; reason = "رسیدن به TP3"
         elif stage == 8:
+            status_text = "منتظر ۵۰٪ راه TP4"
             if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
-                new_sl = tp3
-                t["current_stage"] = 9
-                reason = "۵۰٪ راه TP4"
+                new_sl = tp3; t["current_stage"] = 9; reason = "۵۰٪ راه TP4"
         elif stage == 9:
+            status_text = "منتظر TP4"
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
-                new_sl = half4
-                t["current_stage"] = 10
-                reason = "رسیدن به TP4"
+                new_sl = half4; t["current_stage"] = 10; reason = "رسیدن به TP4"
         elif stage == 10:
+            status_text = "منتظر تمدید تارگت 🚀"
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
-                dist_ext = abs(tp4 - tp3)
-                new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
-                new_sl = tp3
-                t["tp4"] = new_tp
-                t["current_stage"] = 11
-                reason = f"تمدید تارگت! تارگت جدید: {new_tp:.4f}"
+                new_tp = current_tp + dist4 if is_long else current_tp - dist4
+                new_sl = tp3; t["tp4"] = new_tp; t["current_stage"] = 11; reason = "تمدید تارگت"
         elif stage >= 11:
+            status_text = "شکار سود در روند قوی 🚀"
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
-                dist_ext = abs(tp4 - tp3)
-                new_tp = current_tp + dist_ext if is_long else current_tp - dist_ext
-                new_sl = t["tp4"]
-                t["tp4"] = new_tp
-                t["current_stage"] = stage + 1
-                reason = f"تمدید مجدد تارگت! تارگت جدید: {new_tp:.4f}"
+                new_tp = current_tp + dist4 if is_long else current_tp - dist4
+                new_sl = t["tp4"]; t["tp4"] = new_tp; t["current_stage"] = stage + 1; reason = "تمدید مجدد"
 
         if reason:
             payload = {"stopLoss": str(round(new_sl, 6)), "takeProfit": str(round(new_tp, 6))}
-            p_status, _ = tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
-            if p_status in [200, 201]:
-                send_telegram(f"🔄 <b>مدیریت {pos_key_base}</b>\n{reason}\nاستاپ: {new_sl:.4f}\nتارگت: {new_tp:.4f}")
+            tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
+            current_sl = new_sl
+            current_tp = new_tp
+        
+        # ساخت کارت پوزیشن برای داشبورد
+        emoji = "🟢" if current_roi >= 0 else "🔴"
+        pnl_sign = "+" if pnl >= 0 else ""
+        
+        # محاسبه نوار پیشرفت (به سمت تارگت بعدی)
+        next_target = current_tp
+        if stage < 4: next_target = tp1
+        elif stage < 6: next_target = tp2
+        elif stage < 8: next_target = tp3
+        
+        prog_bar = get_progress_bar(current_price, entry, next_target)
+        
+        dashboard_parts.append(
+            f"{emoji} <b>{pos_key_base}</b> | اهرم: {leverage}X\n"
+            f"🔹 سود (ROI): <code>{current_roi:+.1f}%</code>\n"
+            f"🔹 وضعیت: {status_text}\n"
+            f"🔹 استاپ: <code>{current_sl}</code> | تارگت: <code>{next_target}</code>\n"
+            f"🔹 پیشرفت:\n<code>[{prog_bar}]</code>\n"
+        )
 
-    # 🌟🌟🌟 سیستم جاروبرقی + گزارش‌گیری کامل 🌟🌟🌟
+    # پردازش پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
-            
-            # پیدا کردن اطلاعات بسته شدن از لیست بسته شده‌های صرافی
             matching_closed = [p for p in closed_positions if str(p.get("id")) == key]
-            
-            pnl_text = "نامشخص"
-            reason_text = "نامشخص"
+            pnl_text, reason_text = "نامشخص", "نامشخص"
             
             if matching_closed:
                 matching_closed.sort(key=lambda x: x.get("updatedAt", ""), reverse=True)
                 last_closed = matching_closed[0]
-                
                 realized_pnl = float(last_closed.get("realizedPnL") or 0)
                 closing_reason = last_closed.get("closingReason") or ""
-                
                 pnl_text = f"{realized_pnl:+.2f} USDT"
-                
-                reasons = {
-                    "STOPLOSS": "حد ضرر (Stop Loss)",
-                    "TAKEPROFIT": "حد سود (Take Profit)",
-                    "MANUAL": "دستی (Manual)"
-                }
-                reason_text = reasons.get(closing_reason, closing_reason if closing_reason else "نامشخص")
+                reasons = {"STOPLOSS": "حد ضرر", "TAKEPROFIT": "حد سود", "MANUAL": "دستی"}
+                reason_text = reasons.get(closing_reason, closing_reason)
 
+            state["last_closed"] = f"🔴 {key} | دلیل: {reason_text} | PnL: {pnl_text}"
             state["targets"][key]["closed"] = True
-            send_telegram(f"🏁 <b>پوزیشن با شناسه {key} بسته شد</b>\n"
-                          f"دلیل: {reason_text}\n"
-                          f"سود/ضرر: {pnl_text}")
-            
-            # حذف کامل از دیکشنری
             del state["targets"][key]
-            print(f"Deleted closed position {key} from memory.")
+
+    # ساخت نهایی متن داشبورد
+    if len(open_positions) == 0:
+        dashboard_parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
+    else:
+        dashboard_parts.insert(1, f"📈 سود/ضرر شناور: <code>{total_pnl:+.2f} USDT</code>\n")
+    
+    dashboard_parts.append("━━━━━━━━━━━━━━━━━━━━━")
+    dashboard_parts.append(f"🏁 <b>آخرین پوزیشن بسته شده:</b>\n{state['last_closed']}")
+    
+    now_time = datetime.datetime.now().strftime("%H:%M")
+    dashboard_parts.append(f"🕒 آخرین بروزرسانی: <code>{now_time}</code>")
+    
+    final_text = "\n".join(dashboard_parts)
+
+    # ارسال یا ویرایش پیام داشبورد
+    if state.get("dashboard_id"):
+        success = edit_telegram(state["dashboard_id"], final_text)
+        if not success:
+            state["dashboard_id"] = send_telegram(final_text) # اگر پیام پاک شده بود، جدید می‌فرستیم
+    else:
+        state["dashboard_id"] = send_telegram(final_text)
 
 def run():
     print("Checking...")
