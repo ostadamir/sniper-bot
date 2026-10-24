@@ -25,7 +25,6 @@ def edit_telegram(message_id, text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
-        # اگر پیام تغییری نکرده باشد، تلگرام ارور 400 میدهد که نادیده می‌گیریم
         if res.status_code == 400 and "message is not modified" in res.text:
             return True
         return res.status_code == 200
@@ -60,8 +59,8 @@ def load_state():
                 state = json.load(f)
                 state.setdefault("targets", {})
                 state.setdefault("pending", {})
-                state.setdefault("dashboard_id", None) # 🌟 آیدی پیام داشبورد
-                state.setdefault("last_closed", "هیچ پوزیشنی بسته نشده است.") # 🌟 آخرین پوزیشن بسته شده
+                state.setdefault("dashboard_id", None)
+                state.setdefault("last_closed", "هیچ پوزیشنی بسته نشده است.")
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
@@ -130,9 +129,9 @@ def check_telegram(state):
 # ================= ابزارک نوار پیشرفت =================
 def get_progress_bar(current, entry, target):
     if entry == target: return "░░░░░░░░░░"
-    if target > entry: # لانگ
+    if target > entry: 
         pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
-    else: # شورت
+    else: 
         pct = max(0.0, min(1.0, (entry - current) / (entry - target)))
     filled = int(pct * 10)
     return "█" * filled + "░" * (10 - filled)
@@ -149,7 +148,6 @@ def manage_positions(state):
     open_positions.sort(key=lambda p: p.get("createdAt", ""))
     open_keys = set()
     
-    # متغیرها برای ساخت داشبورد
     dashboard_parts = []
     dashboard_parts.append("📊 <b>داشبورد مدیریت سرمایه (Ostad Signal)</b>\n━━━━━━━━━━━━━━━━━━━━━")
     
@@ -162,7 +160,6 @@ def manage_positions(state):
         pos_key_base = f"{symbol}_{side}"
         open_keys.add(pos_id_str)
         
-        # تطبیق سیگنال‌های جدید
         if pos_id_str not in state["targets"]:
             if pos_key_base in state["pending"] and len(state["pending"][pos_key_base]) > 0:
                 matched_signal = state["pending"][pos_key_base].pop(0)
@@ -188,30 +185,29 @@ def manage_positions(state):
         
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0.01) 
-        size = float(pos.get("size") or 0)
-        leverage = round(size / margin) if margin > 0 else 1
-        total_pnl += pnl
         
+        # 🌟 اصلاح باگ اهرم: مستقیم از صرافی خونده میشه
+        leverage = int(float(pos.get("leverage") or 1))
+        
+        total_pnl += pnl
         current_roi = (pnl / margin) * 100
 
         price_10_roi = entry
-        if size > 0:
+        if margin > 0:
             target_pnl_10 = margin * 0.10
-            price_10_roi = entry + (target_pnl_10 / size) if is_long else entry - (target_pnl_10 / size)
+            price_10_roi = entry + (target_pnl_10 / margin) if is_long else entry - (target_pnl_10 / margin)
 
-        # 🛡️ سیستم دفاعی 1: برگرداندن استاپ لاس
+        # سیستم دفاعی و همگام‌سازی
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_sl = sl
 
-        # 🔄 همگام‌سازی
         if t.get("current_stage", 0) == 0 and current_sl != 0 and abs(current_sl - sl) > 0.00001:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_sl = sl
 
-        # 🛠️ اصلاح تی‌پی
         if t.get("current_stage", 0) < 11 and abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
@@ -228,9 +224,9 @@ def manage_positions(state):
         new_sl, new_tp, reason, status_text = current_sl, current_tp, "", ""
         stage = t.get("current_stage", 0)
         
-        # منطق پله‌ای ۱۱ مرحله‌ای
+        # منطق پله‌ای
         if stage == 0:
-            status_text = "منتظر ۱۰٪ رول ⏳"
+            status_text = "منتظر ریسک‌فری (۱۰٪ ROI) ⏳"
             if current_roi >= 10.0:
                 new_sl = entry; t["current_stage"] = 1; reason = "ریسک‌فری"
         elif stage == 1:
@@ -238,35 +234,35 @@ def manage_positions(state):
             if current_roi >= 20.0:
                 new_sl = price_10_roi; t["current_stage"] = 2; reason = "قفل سود ۱۰٪"
         elif stage == 2:
-            status_text = "منتظر ۷۰٪ راه TP1"
+            status_text = "در حال حرکت به سمت TP1 🚀"
             if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
-                new_sl = tp1_40; t["current_stage"] = 3; reason = "۷۰٪ راه TP1"
+                new_sl = tp1_40; t["current_stage"] = 3; reason = "عبور از ۷۰٪ راه TP1"
         elif stage == 3:
-            status_text = "منتظر TP1"
+            status_text = "در حال حرکت به سمت TP1 🚀"
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 new_sl = tp1_80; t["current_stage"] = 4; reason = "رسیدن به TP1"
         elif stage == 4:
             status_text = "منتظر ۵۰٪ راه TP2"
             if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
-                new_sl = tp1; t["current_stage"] = 5; reason = "۵۰٪ راه TP2"
+                new_sl = tp1; t["current_stage"] = 5; reason = "عبور از ۵۰٪ راه TP2"
         elif stage == 5:
-            status_text = "منتظر TP2"
+            status_text = "در حال حرکت به سمت TP2 🚀"
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = half2; t["current_stage"] = 6; reason = "رسیدن به TP2"
         elif stage == 6:
             status_text = "منتظر ۵۰٪ راه TP3"
             if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
-                new_sl = tp2; t["current_stage"] = 7; reason = "۵۰٪ راه TP3"
+                new_sl = tp2; t["current_stage"] = 7; reason = "عبور از ۵۰٪ راه TP3"
         elif stage == 7:
-            status_text = "منتظر TP3"
+            status_text = "در حال حرکت به سمت TP3 🚀"
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = half3; t["current_stage"] = 8; reason = "رسیدن به TP3"
         elif stage == 8:
             status_text = "منتظر ۵۰٪ راه TP4"
             if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
-                new_sl = tp3; t["current_stage"] = 9; reason = "۵۰٪ راه TP4"
+                new_sl = tp3; t["current_stage"] = 9; reason = "عبور از ۵۰٪ راه TP4"
         elif stage == 9:
-            status_text = "منتظر TP4"
+            status_text = "در حال حرکت به سمت TP4 🚀"
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
                 new_sl = half4; t["current_stage"] = 10; reason = "رسیدن به TP4"
         elif stage == 10:
@@ -286,11 +282,8 @@ def manage_positions(state):
             current_sl = new_sl
             current_tp = new_tp
         
-        # ساخت کارت پوزیشن برای داشبورد
         emoji = "🟢" if current_roi >= 0 else "🔴"
-        pnl_sign = "+" if pnl >= 0 else ""
         
-        # محاسبه نوار پیشرفت (به سمت تارگت بعدی)
         next_target = current_tp
         if stage < 4: next_target = tp1
         elif stage < 6: next_target = tp2
@@ -298,15 +291,15 @@ def manage_positions(state):
         
         prog_bar = get_progress_bar(current_price, entry, next_target)
         
+        # 🌟 اضافه شدن سود دلاری به هر پوزیشن
         dashboard_parts.append(
             f"{emoji} <b>{pos_key_base}</b> | اهرم: {leverage}X\n"
-            f"🔹 سود (ROI): <code>{current_roi:+.1f}%</code>\n"
+            f"🔹 سود/ضرر: <code>{pnl:+.2f} USDT</code> (<code>{current_roi:+.1f}%</code>)\n"
             f"🔹 وضعیت: {status_text}\n"
             f"🔹 استاپ: <code>{current_sl}</code> | تارگت: <code>{next_target}</code>\n"
             f"🔹 پیشرفت:\n<code>[{prog_bar}]</code>\n"
         )
 
-    # پردازش پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
             matching_closed = [p for p in closed_positions if str(p.get("id")) == key]
@@ -325,11 +318,10 @@ def manage_positions(state):
             state["targets"][key]["closed"] = True
             del state["targets"][key]
 
-    # ساخت نهایی متن داشبورد
     if len(open_positions) == 0:
         dashboard_parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
     else:
-        dashboard_parts.insert(1, f"📈 سود/ضرر شناور: <code>{total_pnl:+.2f} USDT</code>\n")
+        dashboard_parts.insert(1, f"📈 سود/ضرر شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
     
     dashboard_parts.append("━━━━━━━━━━━━━━━━━━━━━")
     dashboard_parts.append(f"🏁 <b>آخرین پوزیشن بسته شده:</b>\n{state['last_closed']}")
@@ -339,11 +331,10 @@ def manage_positions(state):
     
     final_text = "\n".join(dashboard_parts)
 
-    # ارسال یا ویرایش پیام داشبورد
     if state.get("dashboard_id"):
         success = edit_telegram(state["dashboard_id"], final_text)
         if not success:
-            state["dashboard_id"] = send_telegram(final_text) # اگر پیام پاک شده بود، جدید می‌فرستیم
+            state["dashboard_id"] = send_telegram(final_text)
     else:
         state["dashboard_id"] = send_telegram(final_text)
 
