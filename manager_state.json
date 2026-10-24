@@ -39,20 +39,10 @@
             "tp4": 8.5524,
             "current_stage": 3,
             "closed": false
-        },
-        "2581560006": {
-            "entry": 102.25,
-            "sl": 105.39,
-            "tp1": 98.943,
-            "tp2": 98.176,
-            "tp3": 97.409,
-            "tp4": 96.641,
-            "current_stage": 3,
-            "closed": false
         }
     },
     "pending": {},
     "offset": 209535437,
     "dashboard_id": 405,
-    "last_closed": "\u0647\u06cc\u0686 \u067e\u0648\u0632\u06cc\u0634\u0646\u06cc \u0628\u0633\u062a\u0647 \u0646\u0634\u062f\u0647 \u0627\u0633\u062a."
+    "last_closed": "\ud83d\udd34 2581560006 | \u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: +0.13 USDT"
 }
