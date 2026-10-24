@@ -149,7 +149,7 @@ def manage_positions(state):
     open_keys = set()
     
     dashboard_parts = []
-    dashboard_parts.append("📊 <b>داشبورد مدیریت سرمایه (Ostad Signal)</b>\n━━━━━━━━━━━━━━━━━━━━━")
+    dashboard_parts.append("📊 <b>داشبورد مدیریت سرمایه</b>\n━━━━━━━━━━━━━━━━━━━━━")
     
     total_pnl = 0.0
     
@@ -185,8 +185,6 @@ def manage_positions(state):
         
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0.01) 
-        
-        # 🌟 اصلاح باگ اهرم: مستقیم از صرافی خونده میشه
         leverage = int(float(pos.get("leverage") or 1))
         
         total_pnl += pnl
@@ -197,7 +195,6 @@ def manage_positions(state):
             target_pnl_10 = margin * 0.10
             price_10_roi = entry + (target_pnl_10 / margin) if is_long else entry - (target_pnl_10 / margin)
 
-        # سیستم دفاعی و همگام‌سازی
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
@@ -221,57 +218,63 @@ def manage_positions(state):
             tp1_70, tp1_40, tp1_80 = entry-(dist1*0.7), entry-(dist1*0.4), entry-(dist1*0.8)
             half2, half3, half4 = tp1-(dist2*0.5), tp2-(dist3*0.5), tp3-(dist4*0.5)
 
-        new_sl, new_tp, reason, status_text = current_sl, current_tp, "", ""
+        new_sl, new_tp, reason, status_text, next_step_text = current_sl, current_tp, "", "", ""
         stage = t.get("current_stage", 0)
         
-        # منطق پله‌ای
+        # 🌟 منطق پله‌ای با متن‌های تفکیک شده و روان
         if stage == 0:
-            status_text = "منتظر ریسک‌فری (۱۰٪ ROI) ⏳"
+            status_text = "⏳ وضعیت: منتظر ۱۰٪ (ریسک‌فری)"
+            next_step_text = ""
             if current_roi >= 10.0:
                 new_sl = entry; t["current_stage"] = 1; reason = "ریسک‌فری"
         elif stage == 1:
-            status_text = "ریسک‌فری شده ✅"
+            status_text = "✅ وضعیت: ریسک‌فری شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۷۰٪ TP1"
             if current_roi >= 20.0:
                 new_sl = price_10_roi; t["current_stage"] = 2; reason = "قفل سود ۱۰٪"
         elif stage == 2:
-            status_text = "در حال حرکت به سمت TP1 🚀"
+            status_text = "✅ وضعیت: قفل سود ۴۰٪"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP1"
             if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
                 new_sl = tp1_40; t["current_stage"] = 3; reason = "عبور از ۷۰٪ راه TP1"
         elif stage == 3:
-            status_text = "در حال حرکت به سمت TP1 🚀"
+            status_text = "✅ وضعیت: TP1 زده شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP2"
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
                 new_sl = tp1_80; t["current_stage"] = 4; reason = "رسیدن به TP1"
         elif stage == 4:
-            status_text = "منتظر ۵۰٪ راه TP2"
+            status_text = "✅ وضعیت: استاپ روی TP1 قفل شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP2"
             if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
                 new_sl = tp1; t["current_stage"] = 5; reason = "عبور از ۵۰٪ راه TP2"
         elif stage == 5:
-            status_text = "در حال حرکت به سمت TP2 🚀"
+            status_text = "✅ وضعیت: TP2 زده شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP3"
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
                 new_sl = half2; t["current_stage"] = 6; reason = "رسیدن به TP2"
         elif stage == 6:
-            status_text = "منتظر ۵۰٪ راه TP3"
+            status_text = "✅ وضعیت: استاپ روی TP2 قفل شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP3"
             if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
                 new_sl = tp2; t["current_stage"] = 7; reason = "عبور از ۵۰٪ راه TP3"
         elif stage == 7:
-            status_text = "در حال حرکت به سمت TP3 🚀"
+            status_text = "✅ وضعیت: TP3 زده شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP4"
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
                 new_sl = half3; t["current_stage"] = 8; reason = "رسیدن به TP3"
         elif stage == 8:
-            status_text = "منتظر ۵۰٪ راه TP4"
+            status_text = "✅ وضعیت: استاپ روی TP3 قفل شد"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP4"
             if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
                 new_sl = tp3; t["current_stage"] = 9; reason = "عبور از ۵۰٪ راه TP4"
         elif stage == 9:
-            status_text = "در حال حرکت به سمت TP4 🚀"
+            status_text = "✅ وضعیت: TP4 زده شد"
+            next_step_text = "🚀 مرحله بعد: در حال تمدید تارگت"
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
                 new_sl = half4; t["current_stage"] = 10; reason = "رسیدن به TP4"
-        elif stage == 10:
-            status_text = "منتظر تمدید تارگت 🚀"
-            if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
-                new_tp = current_tp + dist4 if is_long else current_tp - dist4
-                new_sl = tp3; t["tp4"] = new_tp; t["current_stage"] = 11; reason = "تمدید تارگت"
-        elif stage >= 11:
-            status_text = "شکار سود در روند قوی 🚀"
+        elif stage >= 10:
+            status_text = "✅ وضعیت: تارگت تمدید شد"
+            next_step_text = "🚀 مرحله بعد: شکار سود در روند قوی"
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
                 new_tp = current_tp + dist4 if is_long else current_tp - dist4
                 new_sl = t["tp4"]; t["tp4"] = new_tp; t["current_stage"] = stage + 1; reason = "تمدید مجدد"
@@ -291,14 +294,17 @@ def manage_positions(state):
         
         prog_bar = get_progress_bar(current_price, entry, next_target)
         
-        # 🌟 اضافه شدن سود دلاری به هر پوزیشن
-        dashboard_parts.append(
-            f"{emoji} <b>{pos_key_base}</b> | اهرم: {leverage}X\n"
-            f"🔹 سود/ضرر: <code>{pnl:+.2f} USDT</code> (<code>{current_roi:+.1f}%</code>)\n"
-            f"🔹 وضعیت: {status_text}\n"
-            f"🔹 استاپ: <code>{current_sl}</code> | تارگت: <code>{next_target}</code>\n"
-            f"🔹 پیشرفت:\n<code>[{prog_bar}]</code>\n"
-        )
+        # 🌟 ساخت کارت پوزیشن با ظاهر تمیز و بدون بهم ریختگی
+        card = f"{emoji} <b>{pos_key_base}</b> | {leverage}X\n"
+        card += f"💵 سود: <code>{pnl:+.2f} USDT ({current_roi:+.1f}%)</code>\n"
+        card += f"{status_text}\n"
+        if next_step_text:
+            card += f"{next_step_text}\n"
+        card += f"🛑 استاپ: <code>{current_sl}</code>\n"
+        card += f"🎯 هدف: <code>{next_target}</code>\n"
+        card += f"📊 پیشرفت:\n<code>[{prog_bar}]</code>\n"
+        
+        dashboard_parts.append(card)
 
     for key in list(state["targets"].keys()):
         if key not in open_keys and not state["targets"][key].get("closed", False):
@@ -321,13 +327,13 @@ def manage_positions(state):
     if len(open_positions) == 0:
         dashboard_parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
     else:
-        dashboard_parts.insert(1, f"📈 سود/ضرر شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
+        dashboard_parts.insert(1, f"📈 سود شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
     
     dashboard_parts.append("━━━━━━━━━━━━━━━━━━━━━")
-    dashboard_parts.append(f"🏁 <b>آخرین پوزیشن بسته شده:</b>\n{state['last_closed']}")
+    dashboard_parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
     
     now_time = datetime.datetime.now().strftime("%H:%M")
-    dashboard_parts.append(f"🕒 آخرین بروزرسانی: <code>{now_time}</code>")
+    dashboard_parts.append(f"🕒 آپدیت: <code>{now_time}</code>")
     
     final_text = "\n".join(dashboard_parts)
 
