@@ -19,30 +19,10 @@
             "tp4": 76268.4,
             "current_stage": 1,
             "closed": false
-        },
-        "2581555776": {
-            "entry": 2376.71,
-            "sl": 2449.2,
-            "tp1": 2299.4,
-            "tp2": 2281.6,
-            "tp3": 2263.7,
-            "tp4": 2245.9,
-            "current_stage": 3,
-            "closed": false
-        },
-        "2581559000": {
-            "entry": 9.047,
-            "sl": 9.3267,
-            "tp1": 8.7562,
-            "tp2": 8.6883,
-            "tp3": 8.6204,
-            "tp4": 8.5524,
-            "current_stage": 3,
-            "closed": false
         }
     },
     "pending": {},
     "offset": 209535437,
     "dashboard_id": 405,
-    "last_closed": "\ud83d\udd34 2581560006 | \u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: +0.13 USDT"
+    "last_closed": "\ud83d\udd34 AVAX_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: +0.12 USDT"
 }
