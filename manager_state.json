@@ -1,18 +1,7 @@
 {
-    "targets": {
-        "2576389633": {
-            "entry": 0.32794,
-            "sl": 0.338046,
-            "tp1": 0.317369,
-            "tp2": 0.314908,
-            "tp3": 0.312446,
-            "tp4": 0.309985,
-            "current_stage": 0,
-            "closed": false
-        }
-    },
+    "targets": {},
     "pending": {},
     "offset": 209535437,
     "dashboard_id": 407,
-    "last_closed": "\ud83d\udd34 BTC_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.00 USDT"
+    "last_closed": "\ud83d\udd34 TRX_SHORT\n\u062f\u0644\u06cc\u0644: \u062f\u0633\u062a\u06cc | PnL: -0.10 USDT"
 }
