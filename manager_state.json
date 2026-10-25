@@ -1,7 +1,58 @@
 {
-    "targets": {},
+    "targets": {
+        "2584825565": {
+            "entry": 80500.5,
+            "sl": 83024.1,
+            "tp1": 77945.9,
+            "tp2": 77341.4,
+            "tp3": 76736.9,
+            "tp4": 76132.3,
+            "current_stage": 0,
+            "closed": false
+        },
+        "2584826772": {
+            "entry": 2347.17,
+            "sl": 2418.0,
+            "tp1": 2270.1,
+            "tp2": 2252.5,
+            "tp3": 2234.9,
+            "tp4": 2217.2,
+            "current_stage": 0,
+            "closed": false
+        },
+        "2584828322": {
+            "entry": 1.2992,
+            "sl": 1.3391,
+            "tp1": 1.2572,
+            "tp2": 1.2474,
+            "tp3": 1.2377,
+            "tp4": 1.2279,
+            "current_stage": 0,
+            "closed": false
+        },
+        "2584829764": {
+            "entry": 8.876,
+            "sl": 9.1443,
+            "tp1": 8.585,
+            "tp2": 8.5184,
+            "tp3": 8.4519,
+            "tp4": 8.3853,
+            "current_stage": 0,
+            "closed": false
+        },
+        "2584831198": {
+            "entry": 0.2055,
+            "sl": 0.211871,
+            "tp1": 0.198912,
+            "tp2": 0.197369,
+            "tp3": 0.195826,
+            "tp4": 0.194284,
+            "current_stage": 0,
+            "closed": false
+        }
+    },
     "pending": {},
-    "offset": 209535437,
+    "offset": 209535442,
     "dashboard_id": 407,
     "last_closed": "\ud83d\udd34 TRX_SHORT\n\u062f\u0644\u06cc\u0644: \u062f\u0633\u062a\u06cc | PnL: -0.10 USDT"
 }
