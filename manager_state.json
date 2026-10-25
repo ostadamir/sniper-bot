@@ -29,20 +29,10 @@
             "tp4": 1.2279,
             "current_stage": 0,
             "closed": false
-        },
-        "2586221718": {
-            "entry": 77.5,
-            "sl": 76.732,
-            "tp1": 77.839,
-            "tp2": 78.451,
-            "tp3": 79.062,
-            "tp4": 79.732,
-            "current_stage": 0,
-            "closed": false
         }
     },
     "pending": {},
     "offset": 209535443,
     "dashboard_id": 407,
-    "last_closed": "\ud83d\udd34 ADA_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.00 USDT"
+    "last_closed": "\ud83d\udd34 HYPE_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.10 USDT"
 }
