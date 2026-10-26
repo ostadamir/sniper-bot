@@ -9,20 +9,10 @@
             "tp4": 2217.2,
             "current_stage": 1,
             "closed": false
-        },
-        "2584828322": {
-            "entry": 1.2992,
-            "sl": 1.3391,
-            "tp1": 1.2572,
-            "tp2": 1.2474,
-            "tp3": 1.2377,
-            "tp4": 1.2279,
-            "current_stage": 1,
-            "closed": false
         }
     },
     "pending": {},
     "offset": 209535443,
     "dashboard_id": 407,
-    "last_closed": "\ud83d\udd34 BTC_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.00 USDT"
+    "last_closed": "\ud83d\udd34 XRP_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.00 USDT"
 }
