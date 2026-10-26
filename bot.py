@@ -187,7 +187,6 @@ def manage_positions(state):
         margin = float(pos.get("initialMargin") or 0.01) 
         size = float(pos.get("size") or 0)
         
-        # 🌟 اصلاح باگ اهرم
         if margin > 0 and size > 0:
             leverage = int(round((size * entry) / margin))
         else:
@@ -198,7 +197,6 @@ def manage_positions(state):
 
         price_10_roi = entry
         if size > 0:
-            # 🌟 اصلاح باگ محاسباتی ۲۰٪ رول (تقسیم بر size)
             target_pnl_10 = margin * 0.10
             price_10_roi = entry + (target_pnl_10 / size) if is_long else entry - (target_pnl_10 / size)
 
@@ -212,25 +210,32 @@ def manage_positions(state):
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_sl = sl
 
-        if t.get("current_stage", 0) < 11 and abs(current_tp - tp4) > 0.00001:
+        if t.get("current_stage", 0) < 12 and abs(current_tp - tp4) > 0.00001:
             payload = {"stopLoss": str(current_sl), "takeProfit": str(tp4)}
             tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
             current_tp = tp4
 
         dist1, dist2, dist3, dist4 = abs(tp1-entry), abs(tp2-tp1), abs(tp3-tp2), abs(tp4-tp3)
+        
         if is_long:
-            tp1_70, tp1_40, tp1_80 = entry+(dist1*0.7), entry+(dist1*0.4), entry+(dist1*0.8)
+            tp1_40 = entry + (dist1 * 0.4)
+            tp1_22 = entry + (dist1 * 0.22)
+            tp1_70 = entry + (dist1 * 0.7)
+            tp1_80 = entry + (dist1 * 0.8)
             half2, half3, half4 = tp1+(dist2*0.5), tp2+(dist3*0.5), tp3+(dist4*0.5)
         else:
-            tp1_70, tp1_40, tp1_80 = entry-(dist1*0.7), entry-(dist1*0.4), entry-(dist1*0.8)
+            tp1_40 = entry - (dist1 * 0.4)
+            tp1_22 = entry - (dist1 * 0.22)
+            tp1_70 = entry - (dist1 * 0.7)
+            tp1_80 = entry - (dist1 * 0.8)
             half2, half3, half4 = tp1-(dist2*0.5), tp2-(dist3*0.5), tp3-(dist4*0.5)
 
         new_sl, new_tp, reason, status_text, next_step_text = current_sl, current_tp, "", "", ""
         stage = t.get("current_stage", 0)
         
+        # 🌟 منطق پله‌ای جدید (با پله ۴۰٪)
         if stage == 0:
             status_text = "⏳ وضعیت: منتظر ۱۰٪ سود (ریسک‌فری)"
-            next_step_text = ""
             if current_roi >= 10.0:
                 new_sl = entry; t["current_stage"] = 1; reason = "ریسک‌فری"
         elif stage == 1:
@@ -240,45 +245,50 @@ def manage_positions(state):
                 new_sl = price_10_roi; t["current_stage"] = 2; reason = "قفل سود ۱۰٪"
         elif stage == 2:
             status_text = "✅ وضعیت: قفل سود ۱۰٪"
+            next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۴۰٪ TP1"
+            if (is_long and current_price >= tp1_40) or (not is_long and current_price <= tp1_40):
+                new_sl = tp1_22; t["current_stage"] = 3; reason = "عبور از ۴۰٪ راه TP1"
+        elif stage == 3:
+            status_text = "✅ وضعیت: استاپ ۲۲٪ قفل شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۷۰٪ TP1"
             if (is_long and current_price >= tp1_70) or (not is_long and current_price <= tp1_70):
-                new_sl = tp1_40; t["current_stage"] = 3; reason = "عبور از ۷۰٪ راه TP1"
-        elif stage == 3:
+                new_sl = tp1_40; t["current_stage"] = 4; reason = "عبور از ۷۰٪ راه TP1"
+        elif stage == 4:
             status_text = "✅ وضعیت: استاپ ۴۰٪ قفل شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP1"
             if (is_long and current_price >= tp1) or (not is_long and current_price <= tp1):
-                new_sl = tp1_80; t["current_stage"] = 4; reason = "رسیدن به TP1"
-        elif stage == 4:
+                new_sl = tp1_80; t["current_stage"] = 5; reason = "رسیدن به TP1"
+        elif stage == 5:
             status_text = "✅ وضعیت: TP1 زده شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP2"
             if (is_long and current_price >= half2) or (not is_long and current_price <= half2):
-                new_sl = tp1; t["current_stage"] = 5; reason = "عبور از ۵۰٪ راه TP2"
-        elif stage == 5:
+                new_sl = tp1; t["current_stage"] = 6; reason = "عبور از ۵۰٪ راه TP2"
+        elif stage == 6:
             status_text = "✅ وضعیت: استاپ روی TP1 قفل شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP2"
             if (is_long and current_price >= tp2) or (not is_long and current_price <= tp2):
-                new_sl = half2; t["current_stage"] = 6; reason = "رسیدن به TP2"
-        elif stage == 6:
+                new_sl = half2; t["current_stage"] = 7; reason = "رسیدن به TP2"
+        elif stage == 7:
             status_text = "✅ وضعیت: TP2 زده شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP3"
             if (is_long and current_price >= half3) or (not is_long and current_price <= half3):
-                new_sl = tp2; t["current_stage"] = 7; reason = "عبور از ۵۰٪ راه TP3"
-        elif stage == 7:
+                new_sl = tp2; t["current_stage"] = 8; reason = "عبور از ۵۰٪ راه TP3"
+        elif stage == 8:
             status_text = "✅ وضعیت: استاپ روی TP2 قفل شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP3"
             if (is_long and current_price >= tp3) or (not is_long and current_price <= tp3):
-                new_sl = half3; t["current_stage"] = 8; reason = "رسیدن به TP3"
-        elif stage == 8:
+                new_sl = half3; t["current_stage"] = 9; reason = "رسیدن به TP3"
+        elif stage == 9:
             status_text = "✅ وضعیت: TP3 زده شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP4"
             if (is_long and current_price >= half4) or (not is_long and current_price <= half4):
-                new_sl = tp3; t["current_stage"] = 9; reason = "عبور از ۵۰٪ راه TP4"
-        elif stage == 9:
+                new_sl = tp3; t["current_stage"] = 10; reason = "عبور از ۵۰٪ راه TP4"
+        elif stage == 10:
             status_text = "✅ وضعیت: استاپ روی TP3 قفل شد"
             next_step_text = "🚀 مرحله بعد: در مسیر رسیدن به TP4"
             if (is_long and current_price >= tp4) or (not is_long and current_price <= tp4):
-                new_sl = half4; t["current_stage"] = 10; reason = "رسیدن به TP4"
-        elif stage >= 10:
+                new_sl = half4; t["current_stage"] = 11; reason = "رسیدن به TP4"
+        elif stage >= 11:
             status_text = "✅ وضعیت: TP4 زده شد"
             next_step_text = "🚀 مرحله بعد: شکار سود در روند قوی"
             if (is_long and current_price >= current_tp) or (not is_long and current_price <= current_tp):
@@ -294,9 +304,9 @@ def manage_positions(state):
         emoji = "🟢" if current_roi >= 0 else "🔴"
         
         next_target = current_tp
-        if stage < 4: next_target = tp1
-        elif stage < 6: next_target = tp2
-        elif stage < 8: next_target = tp3
+        if stage < 5: next_target = tp1
+        elif stage < 7: next_target = tp2
+        elif stage < 9: next_target = tp3
         
         prog_bar = get_progress_bar(current_price, entry, next_target)
         
