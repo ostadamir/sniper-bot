@@ -1,15 +1,5 @@
 {
     "targets": {
-        "2584825565": {
-            "entry": 80500.5,
-            "sl": 83024.1,
-            "tp1": 77945.9,
-            "tp2": 77341.4,
-            "tp3": 76736.9,
-            "tp4": 76132.3,
-            "current_stage": 1,
-            "closed": false
-        },
         "2584826772": {
             "entry": 2347.17,
             "sl": 2418.0,
@@ -34,5 +24,5 @@
     "pending": {},
     "offset": 209535443,
     "dashboard_id": 407,
-    "last_closed": "\ud83d\udd34 HYPE_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.10 USDT"
+    "last_closed": "\ud83d\udd34 BTC_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.00 USDT"
 }
