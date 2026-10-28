@@ -88,7 +88,6 @@ def check_telegram(state):
                 state["offset"] = u["update_id"] + 1
                 
                 if "message" in u and "text" in u["message"]:
-                    # چک کردن اینکه پیام از طرف خود کاربر است
                     if str(u["message"].get("chat", {}).get("id")) != str(TELEGRAM_CHAT_ID):
                         continue
                         
@@ -416,4 +415,5 @@ def run():
     save_state(state)
     print("Done.")
 
-if __name
+if __name__ == "__main__":
+    run()
