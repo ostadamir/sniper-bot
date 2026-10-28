@@ -2,11 +2,9 @@ name: Risk Manager Bot
 
 on:
   schedule:
-    # اجرای ربات هر 16 دقیقه
     - cron: '*/16 * * * *'
   workflow_dispatch:
 
-# 🌟 جلوگیری از اجرای همزمان دو ربات برای جلوگیری از باگ Push
 concurrency:
   group: risk-manager-bot
   cancel-in-progress: false
@@ -31,6 +29,12 @@ jobs:
         pip install -r requirements.txt
 
     - name: Run Manager Bot
+      env:
+        # 🌟 این خطوط جدید اضافه شدند تا کلیدهای صرافی به ربات داده بشن
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
+        TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
       run: python bot.py
 
     - name: Commit and Push State
@@ -39,6 +43,5 @@ jobs:
         git config --local user.name "GitHub Action"
         git add .
         git commit -m "Update state file" || exit 0
-        # 🌟 دریافت آخرین تغییرات قبل از آپلود برای جلوگیری از ارور
         git pull --rebase origin main
         git push
