@@ -1,7 +1,23 @@
 {
     "targets": {},
-    "pending": {},
-    "offset": 0,
+    "pending": {
+        "MULLEN_LONG": [
+            {
+                "symbol": "MULLEN",
+                "side": "LONG",
+                "entry": 0.8989,
+                "sl": 0.8884,
+                "tp1": 0.9052,
+                "tp2": 0.914,
+                "tp3": 0.9226,
+                "tp4": 0.9331,
+                "current_stage": 0,
+                "closed": false,
+                "limit_stage": 1
+            }
+        ]
+    },
+    "offset": 209535447,
     "dashboard_id": 407,
     "last_closed": "\ud83d\udd34 AVAX_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0633\u0648\u062f | PnL: +1.13 USDT"
 }
