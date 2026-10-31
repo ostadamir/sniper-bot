@@ -402,7 +402,7 @@ def manage_positions(state):
             
             sym_closed = last_closed.get("symbol", "").replace("USDT", "")
             side_closed = last_closed.get("side", "")
-                        pos_name = f"{sym_closed}_{side_closed}" if sym_closed and side_closed else key
+            pos_name = f"{sym_closed}_{side_closed}" if sym_closed and side_closed else key
 
             state["last_closed"] = f"🔴 {pos_name}\nدلیل: {reason_text} | PnL: {pnl_text}"
             send_telegram(f"🏁 <b>پوزیشن {pos_name} بسته شد!</b>\nدلیل: {reason_text}\nسود/ضرر: {pnl_text}")
