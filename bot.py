@@ -69,7 +69,7 @@ def load_state():
                 for key, t in state.get("targets", {}).items():
                     t.setdefault("current_stage", 0)
                     t.setdefault("closed", False)
-                    t.setdefault("limit_stage", 99) # 🌟 قابلیت جدید
+                    t.setdefault("limit_stage", 99)
                 return state
         except: pass
     return {"targets": {}, "pending": {}, "offset": 0, "dashboard_id": None, "last_closed": "هیچ پوزیشنی بسته نشده است."}
@@ -112,8 +112,7 @@ def check_telegram(state):
                     elif text.startswith("/new"):
                         parts = text.split()
                         
-                        # 🌟 تشخیص حالت‌های محدود
-                        limit_stage = 99 # پیش‌فرض: مدیریت کامل
+                        limit_stage = 99
                         if len(parts) == 10:
                             mode = parts[9].upper()
                             if mode == "RF":
@@ -123,7 +122,7 @@ def check_telegram(state):
                             else:
                                 send_telegram(f"⚠️ حالت {mode} ناشناخته است. از RF یا SAFE استفاده کنید.")
                                 continue
-                            parts = parts[:9] # حذف کلمه کلیدی برای پردازش اعداد
+                            parts = parts[:9]
 
                         if len(parts) == 9:
                             symbol = parts[1].upper().replace("USDT", "")
@@ -255,7 +254,6 @@ def manage_positions(state):
         target_pnl_10 = margin * 0.10
         price_10_roi = entry + (target_pnl_10 / size) if is_long else entry - (target_pnl_10 / size)
 
-        # سیستم دفاعی اولیه
         if current_sl == 0:
             payload = {"stopLoss": str(sl), "takeProfit": str(tp4)}
             st, _ = tt_request("PATCH", f"/futures/positions/{pos_id_str}/tpsl", payload)
@@ -290,9 +288,8 @@ def manage_positions(state):
 
         new_sl, new_tp, reason = current_sl, current_tp, ""
         new_stage = t["current_stage"]
-        max_stage = t.get("limit_stage", 99) # 🌟 دریافت محدودیت مرحله
+        max_stage = t.get("limit_stage", 99)
 
-        # 🌟 فقط تا مرحله‌ای که کاربر اجازه داده پیش میره
         if new_stage < max_stage:
             if new_stage == 0 and current_roi >= 10.0:
                 new_sl = entry; new_stage = 1; reason = "ریسک‌فری"
@@ -341,7 +338,6 @@ def manage_positions(state):
         emoji = "🟢" if current_roi >= 0 else "🔴"
         stage = t["current_stage"]
         
-        # 🌟 تعیین متن وضعیت بر اساس اینکه به محدودیت رسیده یا نه
         if max_stage == 1 and stage >= 1:
             status_text = "🏁 وضعیت: ریسک‌فری شد (پایان مدیریت RF)"
             next_step_text = ""
@@ -401,4 +397,46 @@ def manage_positions(state):
             realized_pnl = float(last_closed.get("realizedPnL") or 0)
             closing_reason = last_closed.get("closingReason") or ""
             pnl_text = f"{realized_pnl:+.2f} USDT"
-            r
+            reasons = {"STOPLOSS": "حد ضرر", "TAKEPROFIT": "حد سود", "MANUAL": "دستی"}
+            reason_text = reasons.get(closing_reason, closing_reason)
+            
+            sym_closed = last_closed.get("symbol", "").replace("USDT", "")
+            side_closed = last_closed.get("side", "")
+                        pos_name = f"{sym_closed}_{side_closed}" if sym_closed and side_closed else key
+
+            state["last_closed"] = f"🔴 {pos_name}\nدلیل: {reason_text} | PnL: {pnl_text}"
+            send_telegram(f"🏁 <b>پوزیشن {pos_name} بسته شد!</b>\nدلیل: {reason_text}\nسود/ضرر: {pnl_text}")
+            
+            state["targets"][key]["closed"] = True
+            del state["targets"][key]
+
+    if len(open_positions) == 0:
+        dashboard_parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
+    else:
+        dashboard_parts.insert(1, f"📈 سود شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
+    
+    dashboard_parts.append("━━━━━━━━━━━━━━━━━━━━━")
+    dashboard_parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
+    
+    iran_time = datetime.datetime.utcnow() + datetime.timedelta(hours=3, minutes=30)
+    dashboard_parts.append(f"🕒 آپدیت: <code>{iran_time.strftime('%H:%M')}</code>")
+    
+    final_text = "\n".join(dashboard_parts)
+
+    if state.get("dashboard_id"):
+        success = edit_telegram(state["dashboard_id"], final_text)
+        if not success:
+            state["dashboard_id"] = send_telegram(final_text)
+    else:
+        state["dashboard_id"] = send_telegram(final_text)
+
+def run():
+    print("Checking...")
+    state = load_state()
+    check_telegram(state)
+    manage_positions(state)
+    save_state(state)
+    print("Done.")
+
+if __name__ == "__main__":
+    run()
