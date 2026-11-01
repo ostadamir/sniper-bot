@@ -1,21 +1,7 @@
 {
-    "targets": {
-        "2610802840": {
-            "symbol": "AAVE",
-            "side": "LONG",
-            "entry": 138.58,
-            "sl": 136.65,
-            "tp1": 139.62,
-            "tp2": 141.13,
-            "tp3": 142.85,
-            "tp4": 144.65,
-            "current_stage": 0,
-            "closed": false,
-            "limit_stage": 1
-        }
-    },
+    "targets": {},
     "pending": {},
     "offset": 209535452,
     "dashboard_id": 446,
-    "last_closed": "\ud83d\udd34 SUI_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.01 USDT"
+    "last_closed": "\ud83d\udd34 AAVE_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -1.32 USDT"
 }
