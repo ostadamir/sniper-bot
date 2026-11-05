@@ -378,10 +378,21 @@ def manage_positions(state):
                 final_sl = max(cur_sl, new_sl)
             else:
                 final_sl = min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-            if patch_tpsl(pos_id, final_sl, new_tp):
-                cur_sl, cur_tp = final_sl, new_tp
-                t["current_stage"] = stage
-                t["tp4"] = new_tp
+            
+            # 🛑 Fix: Prevent updating SL if the current price has already passed it (Race Condition)
+            is_sl_valid = False
+            if is_long and final_sl < price:
+                is_sl_valid = True
+            elif not is_long and final_sl > price:
+                is_sl_valid = True
+
+            if is_sl_valid:
+                if patch_tpsl(pos_id, final_sl, new_tp):
+                    cur_sl, cur_tp = final_sl, new_tp
+                    t["current_stage"] = stage
+                    t["tp4"] = new_tp
+            else:
+                print(f"Skipping SL update for {key_base}: Price already passed {final_sl}")
 
         stage = t["current_stage"]
         status_text, next_text = stage_texts(stage, max_stage)
