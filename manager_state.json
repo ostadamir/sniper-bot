@@ -1,5 +1,19 @@
 {
-    "targets": {},
+    "targets": {
+        "2624647801": {
+            "symbol": "AAVE",
+            "side": "SHORT",
+            "entry": 132.45,
+            "sl": 135.4,
+            "tp1": 130.81,
+            "tp2": 128.3,
+            "tp3": 125.69,
+            "tp4": 123.09,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 2
+        }
+    },
     "pending": {
         "ETH_LONG": [
             {
@@ -17,7 +31,7 @@
             }
         ]
     },
-    "offset": 209535453,
+    "offset": 209535454,
     "dashboard_id": 446,
     "last_closed": "\ud83d\udd34 AAVE_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -1.32 USDT"
 }
