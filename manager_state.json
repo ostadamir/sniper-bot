@@ -12,25 +12,22 @@
             "current_stage": 2,
             "closed": false,
             "limit_stage": 2
+        },
+        "2624989580": {
+            "symbol": "ETH",
+            "side": "LONG",
+            "entry": 2388.54,
+            "sl": 2246.6,
+            "tp1": 2317.51,
+            "tp2": 2353.84,
+            "tp3": 2390.74,
+            "tp4": 2430.97,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99
         }
     },
-    "pending": {
-        "ETH_LONG": [
-            {
-                "symbol": "ETH",
-                "side": "LONG",
-                "entry": 2283.48,
-                "sl": 2246.6,
-                "tp1": 2317.51,
-                "tp2": 2353.84,
-                "tp3": 2390.74,
-                "tp4": 2430.97,
-                "current_stage": 0,
-                "closed": false,
-                "limit_stage": 99
-            }
-        ]
-    },
+    "pending": {},
     "offset": 209535454,
     "dashboard_id": 446,
     "last_closed": "\ud83d\udd34 AAVE_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -1.32 USDT"
