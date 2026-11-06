@@ -9,7 +9,7 @@
             "tp2": 2151.4,
             "tp3": 2134.6,
             "tp4": 2117.8,
-            "current_stage": 0,
+            "current_stage": 1,
             "closed": false,
             "limit_stage": 99,
             "skip_alerted": false
