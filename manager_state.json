@@ -13,24 +13,10 @@
             "closed": false,
             "limit_stage": 99,
             "skip_alerted": false
-        },
-        "2628980098": {
-            "symbol": "BTC",
-            "side": "SHORT",
-            "entry": 76099.6,
-            "sl": 77646.5,
-            "tp1": 74449.3,
-            "tp2": 73878.3,
-            "tp3": 73307.4,
-            "tp4": 72736.5,
-            "current_stage": 2,
-            "closed": false,
-            "limit_stage": 99,
-            "skip_alerted": false
         }
     },
     "pending": {},
     "offset": 209535466,
     "dashboard_id": 481,
-    "last_closed": "\ud83d\udd34 AVAX_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.09 USDT"
+    "last_closed": "\ud83d\udd34 BTC_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: +0.00 USDT"
 }
