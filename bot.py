@@ -11,7 +11,6 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
-
 # ================= Telegram =================
 def send_telegram(text):
     try:
@@ -279,9 +278,6 @@ def manage_positions(state):
         d10 = (margin * 0.10) / size
         price_10 = entry + d10 if is_long else entry - d10
 
-        # 🛑 DEBUG PRINT
-        print(f"DBG {key_base} price={price} entry={entry} raw_entry={pos.get('entryPrice')} sl={cur_sl} pnl={pnl} size={size} roi={roi:.1f}")
-
         # --- Protection sync ---
         tol = max(1e-8, price * 1e-5)
         if cur_sl == 0:
@@ -302,21 +298,39 @@ def manage_positions(state):
             if is_long: final_sl = max(cur_sl, new_sl)
             else: final_sl = min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             
+            # 🛑 SMART TOLERANCE FIX
             is_sl_valid = False
-            if is_long and final_sl < price: is_sl_valid = True
-            elif not is_long and final_sl > price: is_sl_valid = True
+            tolerance = price * 0.0015 # 0.15% تلرانس (حدود 114 دلار برای بیت کوین)
 
-            if is_sl_valid:
+            if is_long:
+                if final_sl < price: 
+                    is_sl_valid = True
+                elif (final_sl - price) <= tolerance:
+                    # اگه قیمت یه کم از استاپ رد شده بود، استاپ رو بذار روی قیمت فعلی بازار (با یه بافر خیلی کوچیک)
+                    final_sl = price * 0.9999 
+                    is_sl_valid = True
+            else: # SHORT
+                if final_sl > price: 
+                    is_sl_valid = True
+                elif (price - final_sl) <= tolerance:
+                    # اگه قیمت یه کم از استاپ رد شده بود، استاپ رو بذار روی قیمت فعلی بازار (با یه بافر خیلی کوچیک)
+                    final_sl = price * 1.0001 
+                    is_sl_valid = True
+
+            # اطمینان از اینکه استاپ به عقب برنمی‌گرده
+            if is_long and final_sl < cur_sl: final_sl = cur_sl
+            if not is_long and final_sl > cur_sl and cur_sl > 0: final_sl = cur_sl
+
+            if is_sl_valid and final_sl > 0:
                 if patch_tpsl(pos_id, final_sl, new_tp):
                     cur_sl, cur_tp = final_sl, new_tp
                     t["current_stage"] = stage
                     t["tp4"] = new_tp
-                    t["skip_alerted"] = False # Reset alert on success
+                    t["skip_alerted"] = False 
             else:
-                # 🛑 FIX: Alert user on telegram if SL couldn't be placed
                 print(f"Skipping {key_base}: final_sl={final_sl} price={price} entry={entry} cur_sl={cur_sl}")
                 if not t.get("skip_alerted"):
-                    send_telegram(f"⚠️ <b>{key_base}:</b> استاپ جدید ({final_sl}) پشت قیمت ({price}) است و اعمال نشد.")
+                    send_telegram(f"⚠️ <b>{key_base}:</b> استاپ جدید ({final_sl}) خیلی دور از قیمت ({price}) است و اعمال نشد.")
                     t["skip_alerted"] = True
 
         stage = t["current_stage"]
