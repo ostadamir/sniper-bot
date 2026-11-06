@@ -64,10 +64,23 @@
             "current_stage": 0,
             "closed": false,
             "limit_stage": 99
+        },
+        "2628625390": {
+            "symbol": "INJ",
+            "side": "SHORT",
+            "entry": 8.15,
+            "sl": 8.483,
+            "tp1": 7.881,
+            "tp2": 7.554,
+            "tp3": 7.192,
+            "tp4": 6.848,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 2
         }
     },
     "pending": {},
-    "offset": 209535462,
+    "offset": 209535463,
     "dashboard_id": 481,
     "last_closed": "\ud83d\udd34 XRP_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.21 USDT"
 }
