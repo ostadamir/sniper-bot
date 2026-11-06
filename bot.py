@@ -1,7 +1,7 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ===== Settings (read from GitHub Secrets / environment variables) =====
+# ===== Settings =====
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
@@ -229,6 +229,11 @@ def manage_positions(state):
 
     parts = ["📊 <b>داشبورد مدیریت سرمایه</b>\n━━━━━━━━━━━━━━━━━━━━━"]
     total_pnl = 0.0
+    
+    # 🛑 متغیرهای مربوط به کنترل طول پیام
+    MAX_LEN = 3900
+    current_len = sum(len(s) for s in parts)
+    hidden_count = 0
 
     for pos in open_positions:
         pos_id = str(pos["id"])
@@ -262,8 +267,6 @@ def manage_positions(state):
         if margin <= 0 or size <= 0: continue
         
         is_long = (side == "LONG")
-
-        # 🛑 CRITICAL FIX: Trust the user's entry from command, IGNORE the broken API entry!
         entry = t["entry"]
 
         leverage = int(round((size * entry) / margin))
@@ -289,19 +292,15 @@ def manage_positions(state):
         if new_tp <= 0: new_tp = t["tp4"]
 
         if reason:
-            # 🛑 SMART SL CALCULATION: Bypass all broken API data!
             if is_long:
-                # For long, SL must be below price. Try to lock 80% of profit.
                 safe_sl = entry + (price - entry) * 0.8
                 final_sl = max(cur_sl, safe_sl)
                 if final_sl > price: final_sl = price * 0.9995
             else:
-                # For short, SL must be above price. Try to lock 80% of profit.
                 safe_sl = entry - (entry - price) * 0.8
                 final_sl = min(cur_sl, safe_sl) if cur_sl > 0 else safe_sl
                 if final_sl < price: final_sl = price * 1.0005
 
-            # Final validation
             is_sl_valid = False
             if is_long and final_sl < price: is_sl_valid = True
             elif not is_long and final_sl > price: is_sl_valid = True
@@ -328,14 +327,32 @@ def manage_positions(state):
         bar = get_progress_bar(price, entry, target)
         emoji = "🟢" if roi >= 0 else "🔴"
         
-        card = f"{emoji} <b>{key_base}</b> ({leverage}X)\n"
-        card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
-        card += f"{status_text}\n"
-        if next_text: card += f"{next_text}\n"
-        card += f"🛑 استاپ: <code>{float(cur_sl):.5f}</code>\n"
-        card += f"🎯 هدف: <code>{float(target):.5f}</code>\n"
-        card += f"📊 پیشرفت:\n<code>[{bar}]</code>\n"
+        # 🛑 تشخیص حالت
+        mode_val = t.get("limit_stage", 99)
+        if mode_val == 1: mode_txt = "🔒 RF"
+        elif mode_val == 2: mode_txt = "🛡️ SAFE"
+        else: mode_txt = "⚙️ عادی"
+
+        # 🛑 اگر فضا کم باشد، کارت را خلاصه میکنیم
+        if current_len > (MAX_LEN - 500):
+            card = f"{emoji} <b>{key_base}</b> ({leverage}X) | {mode_txt}\n"
+            card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
+        else:
+            card = f"{emoji} <b>{key_base}</b> ({leverage}X) | {mode_txt}\n"
+            card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
+            card += f"{status_text}\n"
+            if next_text: card += f"{next_text}\n"
+            card += f"🛑 استاپ: <code>{float(cur_sl):.5f}</code>\n"
+            card += f"🎯 هدف: <code>{float(target):.5f}</code>\n"
+            card += f"📊 پیشرفت:\n<code>[{bar}]</code>\n"
+
+        # 🛑 چک نهایی طول پیام
+        if current_len + len(card) > MAX_LEN:
+            hidden_count += 1
+            continue
+
         parts.append(card)
+        current_len += len(card)
 
     # --- Detect closed ---
     for key in list(state["targets"].keys()):
@@ -358,6 +375,10 @@ def manage_positions(state):
 
     if not open_positions: parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
     else: parts.insert(1, f"📈 سود شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
+
+    # 🛑 اضافه کردن هشدار مخفی شدن
+    if hidden_count > 0:
+        parts.append(f"\n⚠️ <i>{hidden_count} پوزیشن دیگر به دلیل محدودیت طول پیام نمایش داده نشد.</i>")
     
     parts.append("━━━━━━━━━━━━━━━━━━━━━")
     parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
@@ -365,6 +386,10 @@ def manage_positions(state):
     iran = now + datetime.timedelta(hours=3, minutes=30)
     parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
     final_text = "\n".join(parts)
+
+    # 🛑 چک نهایی (اگر بازم خیلی طولانی بود، کلا کات میکنیم)
+    if len(final_text) > 4096:
+        final_text = final_text[:4000] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
 
     if state.get("dashboard_id"):
         if not edit_telegram(state["dashboard_id"], final_text):
