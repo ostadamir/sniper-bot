@@ -1,20 +1,5 @@
 {
     "targets": {
-        "2628937115": {
-            "symbol": "ETH",
-            "side": "SHORT",
-            "entry": 2242.4,
-            "sl": 2309.5,
-            "tp1": 2168.2,
-            "tp2": 2151.4,
-            "tp3": 2134.6,
-            "tp4": 2117.8,
-            "current_stage": 1,
-            "closed": false,
-            "limit_stage": 99,
-            "skip_alerted": false,
-            "fail_count": 0
-        },
         "2629565903": {
             "symbol": "SOL",
             "side": "LONG",
@@ -34,5 +19,5 @@
     "pending": {},
     "offset": 209535468,
     "dashboard_id": 481,
-    "last_closed": "\ud83d\udd34 INJ_SHORT\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: +0.07 USDT"
+    "last_closed": "\ud83d\udd34 ETH_SHORT | \u2696\ufe0f \u0631\u06cc\u0633\u06a9\u200c\u0641\u0631\u06cc (\u0635\u0641\u0631)\n\u062f\u0644\u06cc\u0644 API: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.01 USDT"
 }
