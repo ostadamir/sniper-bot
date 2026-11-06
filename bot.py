@@ -230,7 +230,6 @@ def manage_positions(state):
     parts = ["📊 <b>داشبورد مدیریت سرمایه</b>\n━━━━━━━━━━━━━━━━━━━━━"]
     total_pnl = 0.0
     
-    # متغیرهای کنترل طول پیام
     MAX_LEN = 3900
     current_len = sum(len(s) for s in parts)
     hidden_count = 0
@@ -267,8 +266,6 @@ def manage_positions(state):
         if margin <= 0 or size <= 0: continue
         
         is_long = (side == "LONG")
-
-        # 🛑 CRITICAL FIX: Trust the user's entry from command, IGNORE the broken API entry!
         entry = t["entry"]
 
         leverage = int(round((size * entry) / margin))
@@ -329,13 +326,11 @@ def manage_positions(state):
         bar = get_progress_bar(price, entry, target)
         emoji = "🟢" if roi >= 0 else "🔴"
         
-        # تشخیص حالت
         mode_val = t.get("limit_stage", 99)
         if mode_val == 1: mode_txt = "🔒 RF"
         elif mode_val == 2: mode_txt = "🛡️ SAFE"
         else: mode_txt = "⚙️ عادی"
 
-        # خلاصه سازی در صورت کمبود فضا
         if current_len > (MAX_LEN - 500):
             card = f"{emoji} <b>{key_base}</b> ({leverage}X) | {mode_txt}\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
@@ -348,7 +343,6 @@ def manage_positions(state):
             card += f"🎯 هدف: <code>{float(target):.5f}</code>\n"
             card += f"📊 پیشرفت:\n<code>[{bar}]</code>\n"
 
-        # چک نهایی طول پیام
         if current_len + len(card) > MAX_LEN:
             hidden_count += 1
             continue
@@ -356,7 +350,7 @@ def manage_positions(state):
         parts.append(card)
         current_len += len(card)
 
-    # --- Detect closed ---
+    # --- Detect closed (بخش تغییر یافته) ---
     for key in list(state["targets"].keys()):
         if key in open_keys or state["targets"][key].get("closed", False): continue
         match = [p for p in closed_positions if str(p.get("id")) == key]
@@ -365,14 +359,41 @@ def manage_positions(state):
         last = match[0]
         realized = float(last.get("realizedPnL") or 0)
         why = last.get("closingReason") or ""
+        
+        t = state["targets"][key] # گرفتن اطلاعات پوزیشن قبل از حذف
+        stage = t.get("current_stage", 0) 
+        
         reasons = {"STOPLOSS": "حد ضرر", "TAKEPROFIT": "حد سود", "MANUAL": "دستی"}
         reason_text = reasons.get(why, why)
+        
+        # 🛑 تشخیص دقیق وضعیت بسته شدن
+        if realized > 0.01:
+            if stage >= 1:
+                status_msg = "✅ با سود بسته شد (استاپ سودده)"
+            else:
+                status_msg = "🎯 با سود بسته شد (تارگت)"
+        elif realized < -0.01:
+            if stage == 0:
+                status_msg = "❌ حد ضرر اولیه"
+            else:
+                status_msg = "⚠️ حد ضرر (بعد از مدیریت)"
+        else:
+            status_msg = "⚖️ ریسک‌فری (صفر)"
+
         sym = last.get("symbol", "").replace("USDT", "")
         sd = last.get("side", "")
         name = f"{sym}_{sd}" if sym and sd else key
         pnl_text = f"{realized:+.2f} USDT"
-        state["last_closed"] = f"🔴 {name}\nدلیل: {reason_text} | PnL: {pnl_text}"
-        send_telegram(f"🏁 <b>پوزیشن {name} بسته شد!</b>\nدلیل: {reason_text}\nسود/ضرر: {pnl_text}")
+        
+        # آپدیت داشبورد
+        state["last_closed"] = f"🔴 {name} | {status_msg}\nدلیل API: {reason_text} | PnL: {pnl_text}"
+        
+        # ارسال پیام تلگرام
+        send_telegram(f"🏁 <b>پوزیشن {name} بسته شد!</b>\n"
+                      f"وضعیت: {status_msg}\n"
+                      f"دلیل صرافی: {reason_text}\n"
+                      f"سود/ضرر: {pnl_text}")
+        
         del state["targets"][key]
 
     if not open_positions: parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
