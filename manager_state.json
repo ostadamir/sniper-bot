@@ -25,10 +25,23 @@
             "current_stage": 0,
             "closed": false,
             "limit_stage": 99
+        },
+        "2628980098": {
+            "symbol": "BTC",
+            "side": "SHORT",
+            "entry": 76099.6,
+            "sl": 77646.5,
+            "tp1": 74449.3,
+            "tp2": 73878.3,
+            "tp3": 73307.4,
+            "tp4": 72736.5,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99
         }
     },
     "pending": {},
-    "offset": 209535465,
+    "offset": 209535466,
     "dashboard_id": 481,
     "last_closed": "\ud83d\udd34 INJ_SHORT\n\u062f\u0644\u06cc\u0644: \u062f\u0633\u062a\u06cc | PnL: -0.03 USDT"
 }
