@@ -263,13 +263,7 @@ def manage_positions(state):
         
         is_long = (side == "LONG")
 
-        # 🛑 FIX: Calculate true entry price if API returns 0 or wrong value
-        ex_entry = float(pos.get("entryPrice") or 0)
-        if ex_entry <= 0:
-            ex_entry = price - pnl / size if is_long else price + pnl / size
-            
-        if ex_entry > 0:
-            t["entry"] = ex_entry
+        # 🛑 CRITICAL FIX: Trust the user's entry from command, IGNORE the broken API entry!
         entry = t["entry"]
 
         leverage = int(round((size * entry) / margin))
@@ -295,33 +289,24 @@ def manage_positions(state):
         if new_tp <= 0: new_tp = t["tp4"]
 
         if reason:
-            if is_long: final_sl = max(cur_sl, new_sl)
-            else: final_sl = min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-            
-            # 🛑 SMART TOLERANCE FIX
-            is_sl_valid = False
-            tolerance = price * 0.0015 # 0.15% تلرانس (حدود 114 دلار برای بیت کوین)
-
+            # 🛑 SMART SL CALCULATION: Bypass all broken API data!
             if is_long:
-                if final_sl < price: 
-                    is_sl_valid = True
-                elif (final_sl - price) <= tolerance:
-                    # اگه قیمت یه کم از استاپ رد شده بود، استاپ رو بذار روی قیمت فعلی بازار (با یه بافر خیلی کوچیک)
-                    final_sl = price * 0.9999 
-                    is_sl_valid = True
-            else: # SHORT
-                if final_sl > price: 
-                    is_sl_valid = True
-                elif (price - final_sl) <= tolerance:
-                    # اگه قیمت یه کم از استاپ رد شده بود، استاپ رو بذار روی قیمت فعلی بازار (با یه بافر خیلی کوچیک)
-                    final_sl = price * 1.0001 
-                    is_sl_valid = True
+                # For long, SL must be below price. Try to lock 80% of profit.
+                safe_sl = entry + (price - entry) * 0.8
+                final_sl = max(cur_sl, safe_sl)
+                if final_sl > price: final_sl = price * 0.9995
+            else:
+                # For short, SL must be above price. Try to lock 80% of profit.
+                safe_sl = entry - (entry - price) * 0.8
+                final_sl = min(cur_sl, safe_sl) if cur_sl > 0 else safe_sl
+                if final_sl < price: final_sl = price * 1.0005
 
-            # اطمینان از اینکه استاپ به عقب برنمی‌گرده
-            if is_long and final_sl < cur_sl: final_sl = cur_sl
-            if not is_long and final_sl > cur_sl and cur_sl > 0: final_sl = cur_sl
+            # Final validation
+            is_sl_valid = False
+            if is_long and final_sl < price: is_sl_valid = True
+            elif not is_long and final_sl > price: is_sl_valid = True
 
-            if is_sl_valid and final_sl > 0:
+            if is_sl_valid:
                 if patch_tpsl(pos_id, final_sl, new_tp):
                     cur_sl, cur_tp = final_sl, new_tp
                     t["current_stage"] = stage
@@ -330,7 +315,7 @@ def manage_positions(state):
             else:
                 print(f"Skipping {key_base}: final_sl={final_sl} price={price} entry={entry} cur_sl={cur_sl}")
                 if not t.get("skip_alerted"):
-                    send_telegram(f"⚠️ <b>{key_base}:</b> استاپ جدید ({final_sl}) خیلی دور از قیمت ({price}) است و اعمال نشد.")
+                    send_telegram(f"⚠️ <b>{key_base}:</b> استاپ جدید ({final_sl}) اعمال نشد.")
                     t["skip_alerted"] = True
 
         stage = t["current_stage"]
