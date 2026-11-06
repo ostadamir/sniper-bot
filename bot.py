@@ -1,7 +1,7 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ===== Settings =====
+# ===== Settings (read from GitHub Secrets / environment variables) =====
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
@@ -23,13 +23,11 @@ def send_telegram(text):
         return None
 
 def edit_telegram(message_id, text):
-    if not message_id:
-        return False
+    if not message_id: return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
-        if res.status_code == 200:
-            return True
+        if res.status_code == 200: return True
         if res.status_code == 400:
             if "message is not modified" in res.text: return True
             if "message to edit not found" in res.text: return False
@@ -47,8 +45,7 @@ def tt_sign(secret, timestamp, method, uri):
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 def tt_request(method, uri, payload=None):
-    if not TRUETRADE_KEY or not TRUETRADE_SECRET:
-        return 500, {}
+    if not TRUETRADE_KEY or not TRUETRADE_SECRET: return 500, {}
     timestamp = str(int(time.time() * 1000))
     signature = tt_sign(TRUETRADE_SECRET, timestamp, method, uri)
     headers = {"X-API-Key": TRUETRADE_KEY, "X-Timestamp": timestamp, "X-Signature": signature, "Content-Type": "application/json"}
@@ -57,21 +54,17 @@ def tt_request(method, uri, payload=None):
             res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
         elif method == "PATCH":
             res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
-        else:
-            return 500, {}
+        else: return 500, {}
         return res.status_code, res.json() if res.text else {}
     except Exception as e:
         return 500, str(e)
-
 
 def patch_tpsl(pos_id, sl_value, tp_value):
     payload = {"stopLoss": str(round(sl_value, 6)), "takeProfit": str(round(tp_value, 6))}
     st, resp = tt_request("PATCH", f"/futures/positions/{pos_id}/tpsl", payload)
     if st not in (200, 201):
-        # 🛑 چاپ دقیق ارور صرافی برای اینکه بفهمیم چرا استاپ رو قبول نمیکنه
         print(f"!!! TrueTrade API Error for {pos_id}: Status {st} - Response: {resp}")
     return st in (200, 201)
-
 
 # ================= State =================
 def new_state():
@@ -87,13 +80,13 @@ def load_state():
                 t.setdefault("current_stage", 0)
                 t.setdefault("closed", False)
                 t.setdefault("limit_stage", 99)
+                t.setdefault("skip_alerted", False)
             return state
         except Exception: pass
     return new_state()
 
 def save_state(state):
     with open(STATE_FILE, "w") as f: json.dump(state, f, indent=4)
-
 
 # ================= Telegram commands =================
 USAGE = ("فرمت دستور:\n/new SYMBOL SIDE ENTRY SL TP1 TP2 TP3 TP4 [RF|SAFE]\n/cancel SYMBOL SIDE")
@@ -137,7 +130,7 @@ def handle_new(state, parts):
         send_telegram("❌ استاپ یا ترتیب تارگت‌ها همخوانی ندارد.")
         return
 
-    new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "current_stage": 0, "closed": False, "limit_stage": limit_stage}
+    new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "current_stage": 0, "closed": False, "limit_stage": limit_stage, "skip_alerted": False}
     for ex in state["pending"].get(pos_key, []):
         if ex["entry"] == e and ex["sl"] == s: return
     state["pending"].setdefault(pos_key, []).append(new_sig)
@@ -162,7 +155,6 @@ def check_telegram(state):
                 else: send_telegram("❌ فرمت: /cancel SYMBOL SIDE")
             elif text.startswith("/new"): handle_new(state, parts)
     except Exception as e: print("TG Check Error:", e)
-
 
 # ================= Stage logic =================
 def get_progress_bar(current, entry, target):
@@ -225,7 +217,6 @@ def stage_texts(stage, max_stage):
     if max_stage == 2 and stage >= 2: return "🏁 وضعیت: قفل سود ۱۰٪ شد (پایان مدیریت SAFE)", ""
     return STAGE_TEXT[min(stage, 11)]
 
-
 # ================= Main logic =================
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
@@ -266,22 +257,30 @@ def manage_positions(state):
         cur_sl = float(pos.get("stopLoss") or 0)
         cur_tp = float(pos.get("takeProfit") or 0)
 
-        ex_entry = float(pos.get("entryPrice") or 0)
-        if ex_entry > 0: t["entry"] = ex_entry
-        entry = t["entry"]
-        
-        is_long = (side == "LONG")
-
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0)
         size = float(pos.get("size") or 0)
         if margin <= 0 or size <= 0: continue
+        
+        is_long = (side == "LONG")
+
+        # 🛑 FIX: Calculate true entry price if API returns 0 or wrong value
+        ex_entry = float(pos.get("entryPrice") or 0)
+        if ex_entry <= 0:
+            ex_entry = price - pnl / size if is_long else price + pnl / size
+            
+        if ex_entry > 0:
+            t["entry"] = ex_entry
+        entry = t["entry"]
 
         leverage = int(round((size * entry) / margin))
         total_pnl += pnl
         roi = (pnl / margin) * 100
         d10 = (margin * 0.10) / size
         price_10 = entry + d10 if is_long else entry - d10
+
+        # 🛑 DEBUG PRINT
+        print(f"DBG {key_base} price={price} entry={entry} raw_entry={pos.get('entryPrice')} sl={cur_sl} pnl={pnl} size={size} roi={roi:.1f}")
 
         # --- Protection sync ---
         tol = max(1e-8, price * 1e-5)
@@ -303,7 +302,6 @@ def manage_positions(state):
             if is_long: final_sl = max(cur_sl, new_sl)
             else: final_sl = min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             
-            # 🛑 بررسی فیزیک بازار برای SHORT/LONG
             is_sl_valid = False
             if is_long and final_sl < price: is_sl_valid = True
             elif not is_long and final_sl > price: is_sl_valid = True
@@ -313,8 +311,13 @@ def manage_positions(state):
                     cur_sl, cur_tp = final_sl, new_tp
                     t["current_stage"] = stage
                     t["tp4"] = new_tp
+                    t["skip_alerted"] = False # Reset alert on success
             else:
-                print(f"Skipping SL update for {key_base}: Price already passed {final_sl}")
+                # 🛑 FIX: Alert user on telegram if SL couldn't be placed
+                print(f"Skipping {key_base}: final_sl={final_sl} price={price} entry={entry} cur_sl={cur_sl}")
+                if not t.get("skip_alerted"):
+                    send_telegram(f"⚠️ <b>{key_base}:</b> استاپ جدید ({final_sl}) پشت قیمت ({price}) است و اعمال نشد.")
+                    t["skip_alerted"] = True
 
         stage = t["current_stage"]
         status_text, next_text = stage_texts(stage, max_stage)
