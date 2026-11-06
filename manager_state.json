@@ -37,10 +37,10 @@
             "tp2": 73878.3,
             "tp3": 73307.4,
             "tp4": 72736.5,
-            "current_stage": 0,
+            "current_stage": 2,
             "closed": false,
             "limit_stage": 99,
-            "skip_alerted": true
+            "skip_alerted": false
         }
     },
     "pending": {},
