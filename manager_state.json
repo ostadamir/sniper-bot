@@ -11,7 +11,8 @@
             "tp4": 2117.8,
             "current_stage": 0,
             "closed": false,
-            "limit_stage": 99
+            "limit_stage": 99,
+            "skip_alerted": false
         },
         "2628970297": {
             "symbol": "AVAX",
@@ -24,7 +25,8 @@
             "tp4": 8.194,
             "current_stage": 0,
             "closed": false,
-            "limit_stage": 99
+            "limit_stage": 99,
+            "skip_alerted": false
         },
         "2628980098": {
             "symbol": "BTC",
@@ -37,7 +39,8 @@
             "tp4": 72736.5,
             "current_stage": 0,
             "closed": false,
-            "limit_stage": 99
+            "limit_stage": 99,
+            "skip_alerted": false
         }
     },
     "pending": {},
