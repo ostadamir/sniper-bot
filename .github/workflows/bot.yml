@@ -1,8 +1,11 @@
 name: Risk Manager Bot
 
 on:
-  schedule:
-    - cron: '*/16 * * * *'
+  # تایمر داخلی گیت‌هاب غیرفعال شد تا با کرون‌جاب تداخل نداشته باشد و سهمیه هدر نرود
+  # schedule:
+  #   - cron: '*/16 * * * *'
+  
+  # این گزینه اجازه می‌دهد از بیرون (کرون‌جاب) یا دستی اجرا شود
   workflow_dispatch:
 
 concurrency:
@@ -13,35 +16,44 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # برای اینکه بتونه فایل manager_state.json رو سیو و پوش کنه
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Run Manager Bot
-      env:
-        # 🌟 این خطوط جدید اضافه شدند تا کلیدهای صرافی به ربات داده بشن
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
-        TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
-      run: python bot.py
+      - name: Run Manager Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
+          TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
+        run: python bot.py
 
-    - name: Commit and Push State
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add .
-        git commit -m "Update state file" || exit 0
-        git pull --rebase origin main
-        git push
+      # اگر ربات پیپر (paper) هم داری، این بخش رو از حالت کامنت دربیار (علامت # رو بردار)
+      # - name: Run Paper Bot
+      #   env:
+      #     TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      #     TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      #     TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
+      #     TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
+      #   run: python paper_bot.py
+
+      - name: Commit and Push State
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add manager_state.json
+          # اگر فایل paper_state.json هم داری، خط زیر رو از کامنت دربیار
+          # git add paper_state.json
+          git commit -m "Update state" || echo "No changes to commit"
+          git push
