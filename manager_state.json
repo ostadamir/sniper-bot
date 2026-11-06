@@ -12,12 +12,13 @@
             "current_stage": 1,
             "closed": false,
             "limit_stage": 99,
-            "skip_alerted": false
+            "skip_alerted": false,
+            "fail_count": 0
         },
         "2629565903": {
             "symbol": "SOL",
             "side": "LONG",
-            "entry": 90.53,
+            "entry": 90.98,
             "sl": 89.47,
             "tp1": 91.58,
             "tp2": 92.76,
@@ -26,7 +27,8 @@
             "current_stage": 0,
             "closed": false,
             "limit_stage": 99,
-            "skip_alerted": false
+            "skip_alerted": false,
+            "fail_count": 0
         }
     },
     "pending": {},
