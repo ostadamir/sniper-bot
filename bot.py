@@ -1,7 +1,7 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ===== Settings =====
+# ===== Settings (read from GitHub Secrets / environment variables) =====
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
@@ -230,7 +230,7 @@ def manage_positions(state):
     parts = ["📊 <b>داشبورد مدیریت سرمایه</b>\n━━━━━━━━━━━━━━━━━━━━━"]
     total_pnl = 0.0
     
-    # 🛑 متغیرهای مربوط به کنترل طول پیام
+    # متغیرهای کنترل طول پیام
     MAX_LEN = 3900
     current_len = sum(len(s) for s in parts)
     hidden_count = 0
@@ -267,6 +267,8 @@ def manage_positions(state):
         if margin <= 0 or size <= 0: continue
         
         is_long = (side == "LONG")
+
+        # 🛑 CRITICAL FIX: Trust the user's entry from command, IGNORE the broken API entry!
         entry = t["entry"]
 
         leverage = int(round((size * entry) / margin))
@@ -327,13 +329,13 @@ def manage_positions(state):
         bar = get_progress_bar(price, entry, target)
         emoji = "🟢" if roi >= 0 else "🔴"
         
-        # 🛑 تشخیص حالت
+        # تشخیص حالت
         mode_val = t.get("limit_stage", 99)
         if mode_val == 1: mode_txt = "🔒 RF"
         elif mode_val == 2: mode_txt = "🛡️ SAFE"
         else: mode_txt = "⚙️ عادی"
 
-        # 🛑 اگر فضا کم باشد، کارت را خلاصه میکنیم
+        # خلاصه سازی در صورت کمبود فضا
         if current_len > (MAX_LEN - 500):
             card = f"{emoji} <b>{key_base}</b> ({leverage}X) | {mode_txt}\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
@@ -346,7 +348,7 @@ def manage_positions(state):
             card += f"🎯 هدف: <code>{float(target):.5f}</code>\n"
             card += f"📊 پیشرفت:\n<code>[{bar}]</code>\n"
 
-        # 🛑 چک نهایی طول پیام
+        # چک نهایی طول پیام
         if current_len + len(card) > MAX_LEN:
             hidden_count += 1
             continue
@@ -376,7 +378,6 @@ def manage_positions(state):
     if not open_positions: parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
     else: parts.insert(1, f"📈 سود شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
 
-    # 🛑 اضافه کردن هشدار مخفی شدن
     if hidden_count > 0:
         parts.append(f"\n⚠️ <i>{hidden_count} پوزیشن دیگر به دلیل محدودیت طول پیام نمایش داده نشد.</i>")
     
@@ -387,7 +388,6 @@ def manage_positions(state):
     parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
     final_text = "\n".join(parts)
 
-    # 🛑 چک نهایی (اگر بازم خیلی طولانی بود، کلا کات میکنیم)
     if len(final_text) > 4096:
         final_text = final_text[:4000] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
 
