@@ -12,10 +12,62 @@
             "current_stage": 0,
             "closed": false,
             "limit_stage": 99
+        },
+        "2627661979": {
+            "symbol": "BTC",
+            "side": "SHORT",
+            "entry": 75988.3,
+            "sl": 78263.5,
+            "tp1": 73476.6,
+            "tp2": 72906.7,
+            "tp3": 72336.8,
+            "tp4": 71766.9,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99
+        },
+        "2627662877": {
+            "symbol": "ETH",
+            "side": "SHORT",
+            "entry": 2235.34,
+            "sl": 2303.5,
+            "tp1": 2162.6,
+            "tp2": 2145.8,
+            "tp3": 2129.1,
+            "tp4": 2112.3,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99
+        },
+        "2627663740": {
+            "symbol": "SOL",
+            "side": "SHORT",
+            "entry": 90.02,
+            "sl": 92.8648,
+            "tp1": 87.1847,
+            "tp2": 86.5085,
+            "tp3": 85.8323,
+            "tp4": 85.1561,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99
+        },
+        "2627664587": {
+            "symbol": "BNB",
+            "side": "SHORT",
+            "entry": 694.03,
+            "sl": 714.408,
+            "tp1": 670.711,
+            "tp2": 665.509,
+            "tp3": 660.307,
+            "tp4": 655.105,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99
         }
     },
     "pending": {},
-    "offset": 209535457,
+    "offset": 209535461,
     "dashboard_id": 460,
     "last_closed": "\ud83d\udd34 XRP_LONG\n\u062f\u0644\u06cc\u0644: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.21 USDT"
 }
