@@ -36,16 +36,21 @@ def edit_telegram(message_id, text):
                             timeout=10)
         if res.status_code == 200:
             return True
+        
         if res.status_code == 400:
             if "message is not modified" in res.text:
                 return True
             if "message to edit not found" in res.text:
                 return False
+            # 🛑 فیکس جدید: اگر تلگرام هر ارور 400 دیگری داد (مثل طولانی بودن متن)، به کد اصلی بگو ناموفق بوده تا پیام جدید بفرسته
+            print("TG Edit 400 Error:", res.text)
+            return False 
+            
         print("edit failed:", res.status_code)
-        return True
+        return False # 🛑 فیکس: قبلا اینجا True بود که باعث گیر کردن داشبورد میشد
     except Exception as e:
         print("TG Edit Error:", e)
-        return True
+        return False
 
 
 # ================= TrueTrade =================
@@ -379,7 +384,7 @@ def manage_positions(state):
             else:
                 final_sl = min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             
-            # 🛑 Fix: Prevent updating SL if the current price has already passed it (Race Condition)
+            # 🛑 فیکس باگ SHORT: جلوگیری از ثبت استاپ لاس غلط
             is_sl_valid = False
             if is_long and final_sl < price:
                 is_sl_valid = True
