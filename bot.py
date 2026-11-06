@@ -102,19 +102,17 @@ def handle_cancel(state, parts):
 
 def handle_new(state, parts):
     limit_stage = 99
-    # بررسی حالت RF یا SAFE
     if len(parts) > 0 and parts[-1].upper() in ("RF", "SAFE"):
         mode = parts[-1].upper()
         if mode == "RF": limit_stage = 1
         elif mode == "SAFE": limit_stage = 2
-        parts = parts[:-1] # حذف کلمه حالت از انتهای لیست
+        parts = parts[:-1]
 
-    # اگر تعداد اجزا 8 بود (یعنی 3 تارگت دادیم)، TP4 رو خودکار حساب کن
-    if len(parts) == 8:
+    if len(parts) == 8: # اگه ۳ تارگت دادیم، TP4 رو حساب کن
         try:
             tp3 = float(parts[7])
             tp2 = float(parts[6])
-            tp4 = tp3 + (tp3 - tp2) # فرمول کلود
+            tp4 = tp3 + (tp3 - tp2)
             parts.append(str(tp4))
         except ValueError:
             pass
@@ -171,6 +169,27 @@ def get_progress_bar(current, entry, target):
     else: pct = max(0.0, min(1.0, (entry - current) / (entry - target)))
     filled = int(pct * 10)
     return "█" * filled + "░" * (10 - filled)
+
+# 🛑 تابع جدید برای تشخیص دقیق محل بسته شدن
+def get_close_status(stage, why):
+    if why == "MANUAL": return "🖐️ بسته شده دستی"
+    
+    status_map = {
+        0: "❌ حد ضرر اولیه",
+        1: "⚖️ ریسک‌فری (صفر)",
+        2: "💰 قفل سود ۱۰٪",
+        3: "🛡️ استاپ ۲۲٪ مسیر TP1",
+        4: "🛡️ استاپ ۴۰٪ مسیر TP1",
+        5: "🎯 TP1 زده شد (استاپ ۸۰٪)",
+        6: "🛡️ استاپ روی TP1",
+        7: "🎯 TP2 زده شد (استاپ ۵۰٪)",
+        8: "🛡️ استاپ روی TP2",
+        9: "🎯 TP3 زده شد (استاپ ۵۰٪)",
+        10: "🛡️ استاپ روی TP3",
+        11: "🎯 TP4 زده شد (استاپ ۵۰٪)",
+        12: "🚀 شکار سود (استاپ روی TP4)"
+    }
+    return status_map.get(stage, "⚖️ بسته شده")
 
 def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stage):
     sl, tp1, tp2, tp3, tp4 = t["sl"], t["tp1"], t["tp2"], t["tp3"], t["tp4"]
@@ -320,7 +339,6 @@ def manage_positions(state):
                     final_sl = price * 1.0005
                     is_sl_valid = True
 
-            # 🛑 جلوگیری از عقب گرد استاپ
             final_sl = max(final_sl, cur_sl) if is_long else (min(final_sl, cur_sl) if cur_sl > 0 else final_sl)
 
             if is_sl_valid:
@@ -380,20 +398,12 @@ def manage_positions(state):
         
         t = state["targets"][key]
         stage = t.get("current_stage", 0) 
-        margin = float(last.get("initialMargin") or 0) 
         
         reasons = {"STOPLOSS": "حد ضرر", "TAKEPROFIT": "حد سود", "MANUAL": "دستی"}
         reason_text = reasons.get(why, why)
         
-        threshold = max(0.05, margin * 0.01) 
-        if realized > threshold:
-            if stage >= 1: status_msg = "✅ با سود بسته شد (استاپ سودده)"
-            else: status_msg = "🎯 با سود بسته شد (تارگت)"
-        elif realized < -threshold:
-            if stage == 0: status_msg = "❌ حد ضرر اولیه"
-            else: status_msg = "⚠️ حد ضرر (بعد از مدیریت)"
-        else:
-            status_msg = "⚖️ ریسک‌فری (صفر)"
+        # 🛑 استفاده از تابع جدید برای تشخیص دقیق
+        status_msg = get_close_status(stage, why)
 
         sym = last.get("symbol", "").replace("USDT", "")
         sd = last.get("side", "")
