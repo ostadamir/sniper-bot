@@ -438,7 +438,7 @@ def manage_positions(state):
     parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
     now = datetime.datetime.now(datetime.timezone.utc)
     iran = now + datetime.timedelta(hours=3, minutes=30)
-        parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
+    parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
         final_text = "\n".join(parts)
 
         if len(final_text) > 4096:
