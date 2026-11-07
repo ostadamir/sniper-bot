@@ -1,7 +1,6 @@
 import time, os, requests, hmac, hashlib, json
 import datetime
 
-# ===== Settings (read from GitHub Secrets / environment variables) =====
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
@@ -11,7 +10,6 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
-# ================= Telegram =================
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -38,7 +36,6 @@ def edit_telegram(message_id, text):
         print("TG Edit Error:", e)
         return True
 
-# ================= TrueTrade =================
 def tt_sign(secret, timestamp, method, uri):
     payload = f"{timestamp}{method.upper()}{uri}"
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -65,7 +62,6 @@ def patch_tpsl(pos_id, sl_value, tp_value):
         print(f"!!! TrueTrade API Error for {pos_id}: Status {st} - Response: {resp}")
     return st in (200, 201)
 
-# ================= State =================
 def new_state():
     return {"targets": {}, "pending": {}, "offset": 0, "dashboard_id": None, "last_closed": NO_RECORD}
 
@@ -87,7 +83,6 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, "w") as f: json.dump(state, f, indent=4)
 
-# ================= Telegram commands =================
 USAGE = ("فرمت دستور:\n/new SYMBOL SIDE ENTRY SL TP1 TP2 TP3 [TP4] [RF|SAFE]\n/cancel SYMBOL SIDE")
 
 def handle_cancel(state, parts):
@@ -99,7 +94,8 @@ def handle_cancel(state, parts):
     pos_key = f"{symbol}_{side}"
     if pos_key in state["pending"]: del state["pending"][pos_key]
     send_telegram(f"🛑 مدیریت {pos_key} لغو شد.")
-    def handle_new(state, parts):
+
+def handle_new(state, parts):
     limit_stage = 99
     if len(parts) > 0 and parts[-1].upper() in ("RF", "SAFE"):
         mode = parts[-1].upper()
@@ -113,8 +109,7 @@ def handle_cancel(state, parts):
             tp2 = float(parts[6])
             tp4 = round(tp3 + (tp3 - tp2), 8)
             parts.append(str(tp4))
-        except ValueError:
-            pass
+        except ValueError: pass
 
     if len(parts) != 9:
         send_telegram("❌ فرمت اشتباه است.\n" + USAGE)
@@ -161,7 +156,6 @@ def check_telegram(state):
             elif text.startswith("/new"): handle_new(state, parts)
     except Exception as e: print("TG Check Error:", e)
 
-# ================= Stage logic =================
 def get_progress_bar(current, entry, target):
     if entry == target: return "░░░░░░░░░░"
     if target > entry: pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
@@ -172,7 +166,6 @@ def get_progress_bar(current, entry, target):
 def get_close_status(stage, why):
     if why == "TAKEPROFIT": return "🎯 تارگت نهایی زده شد"
     if why == "MANUAL": return "🖐️ بسته شده دستی"
-    
     status_map = {
         0: "❌ حد ضرر اولیه", 1: "⚖️ ریسک‌فری (صفر)", 2: "💰 قفل سود ۱۰٪",
         3: "🛡️ استاپ ۲۲٪ مسیر TP1", 4: "🛡️ استاپ ۴۰٪ مسیر TP1", 5: "🎯 TP1 زده شد (استاپ ۸۰٪)",
@@ -223,7 +216,7 @@ def stage_texts(stage, max_stage):
     if max_stage == 1 and stage >= 1: return "🏁 وضعیت: ریسک‌فری شد (پایان مدیریت RF)", ""
     if max_stage == 2 and stage >= 2: return "🏁 وضعیت: قفل سود ۱۰٪ شد (پایان مدیریت SAFE)", ""
     return STAGE_TEXT[min(stage, 11)]
-   # ================= Main logic =================
+
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
@@ -452,4 +445,4 @@ def run():
     print("Done.")
 
 if __name__ == "__main__":
-    run() 
+    run()
