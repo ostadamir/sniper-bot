@@ -37,7 +37,7 @@
             "tp2": 10.3923,
             "tp3": 10.3111,
             "tp4": 10.2299,
-            "current_stage": 0,
+            "current_stage": 1,
             "closed": false,
             "limit_stage": 99,
             "fail_count": 0
@@ -54,7 +54,7 @@
             "current_stage": 0,
             "closed": false,
             "limit_stage": 99,
-            "fail_count": 16
+            "fail_count": 17
         },
         "2632279464": {
             "symbol": "SUI",
