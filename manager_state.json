@@ -14,10 +14,24 @@
             "limit_stage": 99,
             "skip_alerted": false,
             "fail_count": 0
+        },
+        "2632170551": {
+            "symbol": "DASH",
+            "side": "LONG",
+            "entry": 46.78,
+            "sl": 45.89,
+            "tp1": 47.62,
+            "tp2": 48.59,
+            "tp3": 49.54,
+            "tp4": 50.489999999999995,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99,
+            "fail_count": 0
         }
     },
     "pending": {},
-    "offset": 209535468,
+    "offset": 209535469,
     "dashboard_id": 481,
     "last_closed": "\ud83d\udd34 ETH_SHORT | \u2696\ufe0f \u0631\u06cc\u0633\u06a9\u200c\u0641\u0631\u06cc (\u0635\u0641\u0631)\n\u062f\u0644\u06cc\u0644 API: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.01 USDT"
 }
