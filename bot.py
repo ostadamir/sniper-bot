@@ -439,7 +439,7 @@ def manage_positions(state):
     now = datetime.datetime.now(datetime.timezone.utc)
     iran = now + datetime.timedelta(hours=3, minutes=30)
     parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
-        final_text = "\n".join(parts)
+    final_text = "\n".join(parts)
 
         if len(final_text) > 4096:
             final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
