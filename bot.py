@@ -28,9 +28,7 @@ def edit_telegram(message_id, text):
         if res.status_code == 400:
             if "message is not modified" in res.text: return True
             if "message to edit not found" in res.text: return False
-            print("TG Edit 400 Error:", res.text)
             return False 
-        print("edit failed:", res.status_code)
         return True 
     except Exception as e:
         print("TG Edit Error:", e)
@@ -59,7 +57,7 @@ def patch_tpsl(pos_id, sl_value, tp_value):
     payload = {"stopLoss": str(round(sl_value, 6)), "takeProfit": str(round(tp_value, 6))}
     st, resp = tt_request("PATCH", f"/futures/positions/{pos_id}/tpsl", payload)
     if st not in (200, 201):
-        print(f"!!! TrueTrade API Error for {pos_id}: Status {st} - Response: {resp}")
+        print(f"!!! TrueTrade API Error: Status {st} - Response: {resp}")
     return st in (200, 201)
 
 def new_state():
@@ -182,9 +180,7 @@ def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stag
     p40, p22 = entry + g * d1 * 0.4, entry + g * d1 * 0.22
     p70, p80 = entry + g * d1 * 0.7, entry + g * d1 * 0.8
     h2, h3, h4 = tp1 + g * d2 * 0.5, tp2 + g * d3 * 0.5, tp3 + g * d4 * 0.5
-
     def hit(level): return price >= level if is_long else price <= level
-
     chain = [
         (0, "roi", 10.0, entry, "ریسک‌فری"), (1, "roi", 20.0, price_10, "قفل سود ۱۰٪"),
         (2, "price", p40, p22, "عبور از ۴۰٪ راه TP1"), (3, "price", p70, p40, "عبور از ۷۰٪ راه TP1"),
@@ -220,13 +216,11 @@ def stage_texts(stage, max_stage):
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
-
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     open_positions.sort(key=lambda p: p.get("createdAt", ""))
     open_keys = set()
-
     parts = ["📊 <b>داشبورد مدیریت سرمایه</b>\n━━━━━━━━━━━━━━━━━━━━━"]
     total_pnl = 0.0
     MAX_LEN = 3300 
@@ -256,32 +250,26 @@ def manage_positions(state):
         if pos_id not in state["targets"]: continue
         t = state["targets"][pos_id]
         if t.get("closed", False): continue
-
         price = float(pos.get("markPrice") or 0)
         if price <= 0: continue
-        
         cur_sl = float(pos.get("stopLoss") or 0)
         cur_tp = float(pos.get("takeProfit") or 0)
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0)
         size = float(pos.get("size") or 0)
         if margin <= 0 or size <= 0: continue
-        
         is_long = (side == "LONG")
         ex_entry = float(pos.get("entryPrice") or 0)
         if ex_entry <= 0: ex_entry = price - pnl / size if is_long else price + pnl / size
         if ex_entry > 0: t["entry"] = ex_entry
         entry = t["entry"]
-
         leverage = int(round((size * entry) / margin))
         total_pnl += pnl
         roi = (pnl / margin) * 100
         d10 = (margin * 0.10) / size
         price_10 = entry + d10 if is_long else entry - d10
-
         tol = max(1e-8, price * 1e-5)
 
-        # 🛑 ۱. تشخیص استاپ دستی
         if cur_sl > 0:
             adopt_tol = max(tol, price * 5e-4)
             def at_or_better(level):
@@ -294,19 +282,15 @@ def manage_positions(state):
                 t["current_stage"] = adopted
                 send_telegram(f"🔎 <b>{key_base}:</b> استاپ دستی شما شناسایی شد (مرحله {adopted}).")
 
-        # 🛑 ۲. تلاش سایلنت برای صفر کردن استاپ (ایده جدید!)
         if t["current_stage"] >= 1 and cur_sl > 0:
-            # آیا استاپ فعلی، از نقطه ورود بدتره؟ (برای شورت یعنی بالاتر، برای لانگ یعنی پایین‌تر)
             is_worse = (cur_sl > entry + tol) if not is_long else (cur_sl < entry - tol)
             if is_worse:
-                # برای اینکه صرافی ارور نده، فقط وقتی تلاش میکنیم که قیمت به اندازه کافی از نقطه ورود فاصله گرفته باشه
                 distance_to_entry = abs(price - entry)
-                if distance_to_entry > (price * 0.0015): # حداقل 0.15% فاصله
+                if distance_to_entry > (price * 0.0015):
                     if patch_tpsl(pos_id, entry, cur_tp):
                         cur_sl = entry
                         print(f"SILENT SUCCESS: Adjusted SL to exact entry for {key_base}")
 
-        # ۳. محافظت از استاپ (اگه استاپ صفر شد یا شل شد)
         sl0 = t["sl"]
         looser = (cur_sl < sl0 - tol) if is_long else (cur_sl > sl0 + tol)
         if cur_sl == 0 or (t["current_stage"] == 0 and looser):
@@ -328,10 +312,8 @@ def manage_positions(state):
         if reason:
             if is_long: final_sl = max(cur_sl, new_sl)
             else: final_sl = min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-
             same_tp = abs(new_tp - cur_tp) <= tol
             sl_ok = cur_sl > 0 and ((cur_sl >= new_sl - tol) if is_long else (cur_sl <= new_sl + tol))
-            
             if sl_ok and same_tp:
                 t["current_stage"] = stage
                 t["fail_count"] = 0
@@ -348,13 +330,11 @@ def manage_positions(state):
                     elif (price - final_sl) <= tolerance:
                         final_sl = price * 1.0005
                         is_sl_valid = True
-
                 ok = False
                 if is_sl_valid:
                     if is_long: final_sl = max(final_sl, cur_sl)
                     elif cur_sl > 0: final_sl = min(final_sl, cur_sl)
                     ok = patch_tpsl(pos_id, final_sl, new_tp)
-                
                 if ok:
                     cur_sl, cur_tp = final_sl, new_tp
                     t["current_stage"] = stage
@@ -372,15 +352,12 @@ def manage_positions(state):
         if stage < 5: target = t["tp1"]
         elif stage < 7: target = t["tp2"]
         elif stage < 9: target = t["tp3"]
-        
         bar = get_progress_bar(price, entry, target)
         emoji = "🟢" if roi >= 0 else "🔴"
-        
         mode_val = t.get("limit_stage", 99)
         if mode_val == 1: mode_txt = "🔒 RF"
         elif mode_val == 2: mode_txt = "🛡️ SAFE"
         else: mode_txt = "⚙️ عادی"
-
         if current_len > (MAX_LEN - 500):
             card = f"{emoji} <b>{key_base}</b> ({leverage}X) | {mode_txt}\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
@@ -392,11 +369,9 @@ def manage_positions(state):
             card += f"🛑 استاپ: <code>{float(cur_sl):.5f}</code>\n"
             card += f"🎯 هدف: <code>{float(target):.5f}</code>\n"
             card += f"📊 پیشرفت:\n<code>[{bar}]</code>\n"
-
         if current_len + len(card) > MAX_LEN:
             hidden_count += 1
             continue
-
         parts.append(card)
         current_len += len(card)
 
@@ -408,31 +383,24 @@ def manage_positions(state):
         last = match[0]
         realized = float(last.get("realizedPnL") or 0)
         why = last.get("closingReason") or ""
-        
         t = state["targets"][key]
         stage = t.get("current_stage", 0) 
         reasons = {"STOPLOSS": "حد ضرر", "TAKEPROFIT": "حد سود", "MANUAL": "دستی"}
         reason_text = reasons.get(why, why)
         status_msg = get_close_status(stage, why)
-
         sym = last.get("symbol", "").replace("USDT", "")
         sd = last.get("side", "")
         name = f"{sym}_{sd}" if sym and sd else key
         pnl_text = f"{realized:+.2f} USDT"
-        
         state["last_closed"] = f"🔴 {name} | {status_msg}\nدلیل API: {reason_text} | PnL: {pnl_text}"
         send_telegram(f"🏁 <b>پوزیشن {name} بسته شد!</b>\nوضعیت: {status_msg}\nدلیل صرافی: {reason_text}\nسود/ضرر: {pnl_text}")
-        
         del state["targets"][key]
 
     if not open_positions: parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
     else: parts.insert(1, f"📈 سود شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
 
-    if hidden_count > 0:
-        parts.append(f"\n⚠️ <i>{hidden_count} پوزیشن دیگر به دلیل محدودیت طول پیام نمایش داده نشد.</i>")
-    
-    if unmanaged:
-        parts.append(f"⚠️ <i>بدون سیگنال: {', '.join(unmanaged)}</i>")
+    if hidden_count > 0: parts.append(f"\n⚠️ <i>{hidden_count} پوزیشن دیگر به دلیل محدودیت طول پیام نمایش داده نشد.</i>")
+    if unmanaged: parts.append(f"⚠️ <i>بدون سیگنال: {', '.join(unmanaged)}</i>")
     
     parts.append("━━━━━━━━━━━━━━━━━━━━━")
     parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
@@ -441,14 +409,14 @@ def manage_positions(state):
     parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
     final_text = "\n".join(parts)
 
-        if len(final_text) > 4096:
-            final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
+    if len(final_text) > 4096:
+        final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
 
-        if state.get("dashboard_id"):
-            if not edit_telegram(state["dashboard_id"], final_text):
-                state["dashboard_id"] = send_telegram(final_text)
-        else:
+    if state.get("dashboard_id"):
+        if not edit_telegram(state["dashboard_id"], final_text):
             state["dashboard_id"] = send_telegram(final_text)
+    else:
+        state["dashboard_id"] = send_telegram(final_text)
 
 def run():
     print("Checking...")
