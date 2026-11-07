@@ -281,6 +281,7 @@ def manage_positions(state):
 
         tol = max(1e-8, price * 1e-5)
 
+        # 🛑 ۱. تشخیص استاپ دستی
         if cur_sl > 0:
             adopt_tol = max(tol, price * 5e-4)
             def at_or_better(level):
@@ -293,6 +294,19 @@ def manage_positions(state):
                 t["current_stage"] = adopted
                 send_telegram(f"🔎 <b>{key_base}:</b> استاپ دستی شما شناسایی شد (مرحله {adopted}).")
 
+        # 🛑 ۲. تلاش سایلنت برای صفر کردن استاپ (ایده جدید!)
+        if t["current_stage"] >= 1 and cur_sl > 0:
+            # آیا استاپ فعلی، از نقطه ورود بدتره؟ (برای شورت یعنی بالاتر، برای لانگ یعنی پایین‌تر)
+            is_worse = (cur_sl > entry + tol) if not is_long else (cur_sl < entry - tol)
+            if is_worse:
+                # برای اینکه صرافی ارور نده، فقط وقتی تلاش میکنیم که قیمت به اندازه کافی از نقطه ورود فاصله گرفته باشه
+                distance_to_entry = abs(price - entry)
+                if distance_to_entry > (price * 0.0015): # حداقل 0.15% فاصله
+                    if patch_tpsl(pos_id, entry, cur_tp):
+                        cur_sl = entry
+                        print(f"SILENT SUCCESS: Adjusted SL to exact entry for {key_base}")
+
+        # ۳. محافظت از استاپ (اگه استاپ صفر شد یا شل شد)
         sl0 = t["sl"]
         looser = (cur_sl < sl0 - tol) if is_long else (cur_sl > sl0 + tol)
         if cur_sl == 0 or (t["current_stage"] == 0 and looser):
@@ -424,17 +438,17 @@ def manage_positions(state):
     parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
     now = datetime.datetime.now(datetime.timezone.utc)
     iran = now + datetime.timedelta(hours=3, minutes=30)
-    parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
-    final_text = "\n".join(parts)
+        parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
+        final_text = "\n".join(parts)
 
-    if len(final_text) > 4096:
-        final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
+        if len(final_text) > 4096:
+            final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
 
-    if state.get("dashboard_id"):
-        if not edit_telegram(state["dashboard_id"], final_text):
+        if state.get("dashboard_id"):
+            if not edit_telegram(state["dashboard_id"], final_text):
+                state["dashboard_id"] = send_telegram(final_text)
+        else:
             state["dashboard_id"] = send_telegram(final_text)
-    else:
-        state["dashboard_id"] = send_telegram(final_text)
 
 def run():
     print("Checking...")
