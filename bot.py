@@ -12,7 +12,7 @@ NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
 # ===== تنظیمات سود کل پرتفوی =====
 # هر وقت کل سود شناور به 7.5 درصد از کل مارجین رسید، همه پوزیشن‌ها بسته میشن.
-PORTFOLIO_TP_PERCENT = 7.5  
+PORTFOLIO_TP_PERCENT = 5.7  
 
 def send_telegram(text):
     try:
