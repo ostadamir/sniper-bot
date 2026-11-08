@@ -1,19 +1,5 @@
 {
     "targets": {
-        "2635076837": {
-            "symbol": "AVAX",
-            "side": "SHORT",
-            "entry": 8.182,
-            "sl": 8.4336,
-            "tp1": 7.9178,
-            "tp2": 7.8564,
-            "tp3": 7.795,
-            "tp4": 7.7336,
-            "current_stage": 1,
-            "closed": false,
-            "limit_stage": 99,
-            "fail_count": 0
-        },
         "2635085117": {
             "symbol": "BTC",
             "side": "SHORT",
@@ -60,5 +46,5 @@
     "pending": {},
     "offset": 209535480,
     "dashboard_id": 481,
-    "last_closed": "\ud83d\udd34 OP_SHORT | \u2696\ufe0f \u0631\u06cc\u0633\u06a9\u200c\u0641\u0631\u06cc (\u0635\u0641\u0631)\n\u062f\u0644\u06cc\u0644 API: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.18 USDT"
+    "last_closed": "\ud83d\udd34 AVAX_SHORT | \u2696\ufe0f \u0631\u06cc\u0633\u06a9\u200c\u0641\u0631\u06cc (\u0635\u0641\u0631)\n\u062f\u0644\u06cc\u0644 API: \u062d\u062f \u0636\u0631\u0631 | PnL: -0.06 USDT"
 }
