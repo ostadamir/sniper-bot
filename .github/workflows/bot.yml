@@ -1,11 +1,10 @@
 name: Risk Manager Bot
 
 on:
-  # تایمر داخلی گیت‌هاب غیرفعال شد تا با کرون‌جاب تداخل نداشته باشد و سهمیه هدر نرود
+  # تایمر داخلی گیت‌هاب غیرفعال شد تا با کرون‌جاب تداخل نداشته باشد
   # schedule:
   #   - cron: '*/16 * * * *'
   
-  # این گزینه اجازه می‌دهد از بیرون (کرون‌جاب) یا دستی اجرا شود
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +15,7 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # برای اینکه بتونه فایل manager_state.json رو سیو و پوش کنه
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
@@ -39,21 +38,10 @@ jobs:
           TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
         run: python bot.py
 
-      # اگر ربات پیپر (paper) هم داری، این بخش رو از حالت کامنت دربیار (علامت # رو بردار)
-      # - name: Run Paper Bot
-      #   env:
-      #     TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      #     TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      #     TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
-      #     TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
-      #   run: python paper_bot.py
-
       - name: Commit and Push State
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add manager_state.json
-          # اگر فایل paper_state.json هم داری، خط زیر رو از کامنت دربیار
-          # git add paper_state.json
           git commit -m "Update state" || echo "No changes to commit"
           git push
