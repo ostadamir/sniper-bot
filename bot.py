@@ -10,6 +10,10 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
+# ===== تنظیمات سود کل پرتفوی =====
+# هر وقت کل سود شناور به 7.5 درصد از کل مارجین رسید، همه پوزیشن‌ها بسته میشن.
+PORTFOLIO_TP_PERCENT = 7.5  
+
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -48,6 +52,8 @@ def tt_request(method, uri, payload=None):
             res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
         elif method == "PATCH":
             res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
+        elif method == "POST":
+            res = requests.post(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
         else: return 500, {}
         return res.status_code, res.json() if res.text else {}
     except Exception as e:
@@ -58,6 +64,12 @@ def patch_tpsl(pos_id, sl_value, tp_value):
     st, resp = tt_request("PATCH", f"/futures/positions/{pos_id}/tpsl", payload)
     if st not in (200, 201):
         print(f"!!! TrueTrade API Error: Status {st} - Response: {resp}")
+    return st in (200, 201)
+
+def close_position_market(pos_id):
+    st, resp = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
+    if st not in (200, 201):
+        print(f"!!! TrueTrade Close API Error for {pos_id}: Status {st} - Response: {resp}")
     return st in (200, 201)
 
 def new_state():
@@ -164,13 +176,7 @@ def get_progress_bar(current, entry, target):
 def get_close_status(stage, why):
     if why == "TAKEPROFIT": return "🎯 تارگت نهایی زده شد"
     if why == "MANUAL": return "🖐️ بسته شده دستی"
-    status_map = {
-        0: "❌ حد ضرر اولیه", 1: "⚖️ ریسک‌فری (صفر)", 2: "💰 قفل سود ۱۰٪",
-        3: "🛡️ استاپ ۲۲٪ مسیر TP1", 4: "🛡️ استاپ ۴۰٪ مسیر TP1", 5: "🎯 TP1 زده شد (استاپ ۸۰٪)",
-        6: "🛡️ استاپ روی TP1", 7: "🎯 TP2 زده شد (استاپ ۵۰٪)", 8: "🛡️ استاپ روی TP2",
-        9: "🎯 TP3 زده شد (استاپ ۵۰٪)", 10: "🛡️ استاپ روی TP3", 11: "🎯 TP4 زده شد (استاپ ۵۰٪)",
-        12: "🚀 شکار سود (استاپ روی TP4)"
-    }
+    status_map = {0: "❌ حد ضرر اولیه", 1: "⚖️ ریسک‌فری (صفر)", 2: "💰 قفل سود ۱۰٪", 3: "🛡️ استاپ ۲۲٪ مسیر TP1", 4: "🛡️ استاپ ۴۰٪ مسیر TP1", 5: "🎯 TP1 زده شد (استاپ ۸۰٪)", 6: "🛡️ استاپ روی TP1", 7: "🎯 TP2 زده شد (استاپ ۵۰٪)", 8: "🛡️ استاپ روی TP2", 9: "🎯 TP3 زده شد (استاپ ۵۰٪)", 10: "🛡️ استاپ روی TP3", 11: "🎯 TP4 زده شد (استاپ ۵۰٪)", 12: "🚀 شکار سود (استاپ روی TP4)"}
     return status_map.get(stage, "⚖️ بسته شده")
 
 def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stage):
@@ -181,14 +187,7 @@ def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stag
     p70, p80 = entry + g * d1 * 0.7, entry + g * d1 * 0.8
     h2, h3, h4 = tp1 + g * d2 * 0.5, tp2 + g * d3 * 0.5, tp3 + g * d4 * 0.5
     def hit(level): return price >= level if is_long else price <= level
-    chain = [
-        (0, "roi", 10.0, entry, "ریسک‌فری"), (1, "roi", 20.0, price_10, "قفل سود ۱۰٪"),
-        (2, "price", p40, p22, "عبور از ۴۰٪ راه TP1"), (3, "price", p70, p40, "عبور از ۷۰٪ راه TP1"),
-        (4, "price", tp1, p80, "رسیدن به TP1"), (5, "price", h2, tp1, "عبور از ۵۰٪ راه TP2"),
-        (6, "price", tp2, h2, "رسیدن به TP2"), (7, "price", h3, tp2, "عبور از ۵۰٪ راه TP3"),
-        (8, "price", tp3, h3, "رسیدن به TP3"), (9, "price", h4, tp3, "عبور از ۵۰٪ راه TP4"),
-        (10, "price", tp4, h4, "رسیدن به TP4"),
-    ]
+    chain = [(0, "roi", 10.0, entry, "ریسک‌فری"), (1, "roi", 20.0, price_10, "قفل سود ۱۰٪"), (2, "price", p40, p22, "عبور از ۴۰٪ راه TP1"), (3, "price", p70, p40, "عبور از ۷۰٪ راه TP1"), (4, "price", tp1, p80, "رسیدن به TP1"), (5, "price", h2, tp1, "عبور از ۵۰٪ راه TP2"), (6, "price", tp2, h2, "رسیدن به TP2"), (7, "price", h3, tp2, "عبور از ۵۰٪ راه TP3"), (8, "price", tp3, h3, "رسیدن به TP3"), (9, "price", h4, tp3, "عبور از ۵۰٪ راه TP4"), (10, "price", tp4, h4, "رسیدن به TP4")]
     stage, new_sl, new_tp, reason = t["current_stage"], cur_sl, cur_tp, ""
     for st, kind, level, sl_to, why in chain:
         if stage != st or stage >= max_stage: continue
@@ -199,14 +198,7 @@ def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stag
         new_sl, stage, reason = t["tp4"], stage + 1, "تمدید تارگت"
     return stage, new_sl, new_tp, reason
 
-STAGE_TEXT = {
-    0: ("⏳ وضعیت: منتظر ۱۰٪ سود (ریسک‌فری)", ""), 1: ("✅ وضعیت: ریسک‌فری شد", "🚀 مرحله بعد: در مسیر رسیدن به ۲۰٪ سود"),
-    2: ("✅ وضعیت: قفل سود ۱۰٪", "🚀 مرحله بعد: در مسیر رسیدن به ۴۰٪ TP1"), 3: ("✅ وضعیت: استاپ ۲۲٪ قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به ۷۰٪ TP1"),
-    4: ("✅ وضعیت: استاپ ۴۰٪ قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP1"), 5: ("✅ وضعیت: TP1 زده شد", "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP2"),
-    6: ("✅ وضعیت: استاپ روی TP1 قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP2"), 7: ("✅ وضعیت: TP2 زده شد", "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP3"),
-    8: ("✅ وضعیت: استاپ روی TP2 قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP3"), 9: ("✅ وضعیت: TP3 زده شد", "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP4"),
-    10: ("✅ وضعیت: استاپ روی TP3 قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP4"), 11: ("✅ وضعیت: TP4 زده شد", "🚀 مرحله بعد: شکار سود در روند قوی"),
-}
+STAGE_TEXT = {0: ("⏳ وضعیت: منتظر ۱۰٪ سود (ریسک‌فری)", ""), 1: ("✅ وضعیت: ریسک‌فری شد", "🚀 مرحله بعد: در مسیر رسیدن به ۲۰٪ سود"), 2: ("✅ وضعیت: قفل سود ۱۰٪", "🚀 مرحله بعد: در مسیر رسیدن به ۴۰٪ TP1"), 3: ("✅ وضعیت: استاپ ۲۲٪ قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به ۷۰٪ TP1"), 4: ("✅ وضعیت: استاپ ۴۰٪ قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP1"), 5: ("✅ وضعیت: TP1 زده شد", "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP2"), 6: ("✅ وضعیت: استاپ روی TP1 قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP2"), 7: ("✅ وضعیت: TP2 زده شد", "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP3"), 8: ("✅ وضعیت: استاپ روی TP2 قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP3"), 9: ("✅ وضعیت: TP3 زده شد", "🚀 مرحله بعد: در مسیر رسیدن به ۵۰٪ TP4"), 10: ("✅ وضعیت: استاپ روی TP3 قفل شد", "🚀 مرحله بعد: در مسیر رسیدن به TP4"), 11: ("✅ وضعیت: TP4 زده شد", "🚀 مرحله بعد: شکار سود در روند قوی")}
 
 def stage_texts(stage, max_stage):
     if max_stage == 1 and stage >= 1: return "🏁 وضعیت: ریسک‌فری شد (پایان مدیریت RF)", ""
@@ -216,17 +208,35 @@ def stage_texts(stage, max_stage):
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict): return
+    
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     open_positions.sort(key=lambda p: p.get("createdAt", ""))
     open_keys = set()
     parts = ["📊 <b>داشبورد مدیریت سرمایه</b>\n━━━━━━━━━━━━━━━━━━━━━"]
+    
     total_pnl = 0.0
+    total_margin = 0.0 
+    
     MAX_LEN = 3300 
     current_len = sum(len(s) for s in parts)
     hidden_count = 0
     unmanaged = []
+
+    for pos in open_positions:
+        margin = float(pos.get("initialMargin") or 0)
+        pnl = float(pos.get("unrealizedPnL") or 0)
+        total_margin += margin
+        total_pnl += pnl
+
+    if total_margin > 0:
+        target_profit = total_margin * (PORTFOLIO_TP_PERCENT / 100.0)
+        if total_pnl >= target_profit:
+            send_telegram(f"🚀 <b>رسیدن به هدف سود کل!</b>\nکل سود شناور ({total_pnl:+.2f} USDT) از هدف {PORTFOLIO_TP_PERCENT}% (یعنی {target_profit:.2f} USDT) گذشت. در حال بستن همه پوزیشن‌ها...")
+            for pos in open_positions:
+                close_position_market(str(pos["id"]))
+            return 
 
     for pos in open_positions:
         pos_id = str(pos["id"])
@@ -264,7 +274,6 @@ def manage_positions(state):
         if ex_entry > 0: t["entry"] = ex_entry
         entry = t["entry"]
         leverage = int(round((size * entry) / margin))
-        total_pnl += pnl
         roi = (pnl / margin) * 100
         d10 = (margin * 0.10) / size
         price_10 = entry + d10 if is_long else entry - d10
@@ -272,8 +281,7 @@ def manage_positions(state):
 
         if cur_sl > 0:
             adopt_tol = max(tol, price * 5e-4)
-            def at_or_better(level):
-                return (cur_sl >= level - adopt_tol) if is_long else (cur_sl <= level + adopt_tol)
+            def at_or_better(level): return (cur_sl >= level - adopt_tol) if is_long else (cur_sl <= level + adopt_tol)
             adopted = t["current_stage"]
             if adopted < 1 and at_or_better(entry): adopted = 1
             if adopted < 2 and at_or_better(price_10): adopted = 2
@@ -289,7 +297,6 @@ def manage_positions(state):
                 if distance_to_entry > (price * 0.0015):
                     if patch_tpsl(pos_id, entry, cur_tp):
                         cur_sl = entry
-                        print(f"SILENT SUCCESS: Adjusted SL to exact entry for {key_base}")
 
         sl0 = t["sl"]
         looser = (cur_sl < sl0 - tol) if is_long else (cur_sl > sl0 + tol)
@@ -322,14 +329,10 @@ def manage_positions(state):
                 tolerance = price * 0.001
                 if is_long:
                     if final_sl < price: is_sl_valid = True
-                    elif (final_sl - price) <= tolerance:
-                        final_sl = price * 0.9995
-                        is_sl_valid = True
+                    elif (final_sl - price) <= tolerance: final_sl = price * 0.9995; is_sl_valid = True
                 else:
                     if final_sl > price: is_sl_valid = True
-                    elif (price - final_sl) <= tolerance:
-                        final_sl = price * 1.0005
-                        is_sl_valid = True
+                    elif (price - final_sl) <= tolerance: final_sl = price * 1.0005; is_sl_valid = True
                 ok = False
                 if is_sl_valid:
                     if is_long: final_sl = max(final_sl, cur_sl)
@@ -341,7 +344,6 @@ def manage_positions(state):
                     t["tp4"] = new_tp
                     t["fail_count"] = 0
                 else:
-                    print(f"Stage update failed {key_base}: final_sl={final_sl} price={price} entry={entry} cur_sl={cur_sl}")
                     t["fail_count"] = t.get("fail_count", 0) + 1
                     if t["fail_count"] == 3:
                         send_telegram(f"⚠️ <b>{key_base}:</b> ۳ بار تغییر استاپ رد شد (جزئیات تو لاگ).")
@@ -398,10 +400,8 @@ def manage_positions(state):
 
     if not open_positions: parts.append("هیچ پوزیشن بازی وجود ندارد. ⏳")
     else: parts.insert(1, f"📈 سود شناور کل: <code>{total_pnl:+.2f} USDT</code>\n")
-
     if hidden_count > 0: parts.append(f"\n⚠️ <i>{hidden_count} پوزیشن دیگر به دلیل محدودیت طول پیام نمایش داده نشد.</i>")
     if unmanaged: parts.append(f"⚠️ <i>بدون سیگنال: {', '.join(unmanaged)}</i>")
-    
     parts.append("━━━━━━━━━━━━━━━━━━━━━")
     parts.append(f"🏁 <b>آخرین بسته شده:</b>\n{state['last_closed']}")
     now = datetime.datetime.now(datetime.timezone.utc)
