@@ -10,9 +10,21 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
-# ===== تنظیمات سود کل پرتفوی =====
-# هر وقت کل سود شناور به 7.5 درصد از کل مارجین رسید، همه پوزیشن‌ها بسته میشن.
-PORTFOLIO_TP_PERCENT = 5.5  
+# ===== تنظیمات سود کل پرتفوی (پویا) =====
+# درصد سود برای ۴ پوزیشن یا بیشتر
+PORTFOLIO_TP_PERCENT_DEFAULT = 5.71  
+# درصد سود برای ۳ پوزیشن
+PORTFOLIO_TP_PERCENT_3 = 7.0
+# درصد سود برای ۲ پوزیشن
+PORTFOLIO_TP_PERCENT_2 = 8.5
+# درصد سود برای ۱ پوزیشن
+PORTFOLIO_TP_PERCENT_1 = 10.0
+
+def get_dynamic_tp_percent(num_positions):
+    if num_positions == 1: return PORTFOLIO_TP_PERCENT_1
+    if num_positions == 2: return PORTFOLIO_TP_PERCENT_2
+    if num_positions == 3: return PORTFOLIO_TP_PERCENT_3
+    return PORTFOLIO_TP_PERCENT_DEFAULT
 
 def send_telegram(text):
     try:
@@ -224,16 +236,24 @@ def manage_positions(state):
     hidden_count = 0
     unmanaged = []
 
+    # 🛑 محاسبه تعداد پوزیشن‌ها و درصد هدف پویا
+    num_open = len(open_positions)
+    if num_open > 0:
+        active_tp_percent = get_dynamic_tp_percent(num_open)
+    else:
+        active_tp_percent = PORTFOLIO_TP_PERCENT_DEFAULT
+
     for pos in open_positions:
         margin = float(pos.get("initialMargin") or 0)
         pnl = float(pos.get("unrealizedPnL") or 0)
         total_margin += margin
         total_pnl += pnl
 
+    # چک کردن هدف سود کل با درصد پویا
     if total_margin > 0:
-        target_profit = total_margin * (PORTFOLIO_TP_PERCENT / 100.0)
+        target_profit = total_margin * (active_tp_percent / 100.0)
         if total_pnl >= target_profit:
-            send_telegram(f"🚀 <b>رسیدن به هدف سود کل!</b>\nکل سود شناور ({total_pnl:+.2f} USDT) از هدف {PORTFOLIO_TP_PERCENT}% (یعنی {target_profit:.2f} USDT) گذشت. در حال بستن همه پوزیشن‌ها...")
+            send_telegram(f"🚀 <b>رسیدن به هدف سود کل!</b>\nتعداد پوزیشن: {num_open} | هدف فعال: {active_tp_percent}%\nکل سود شناور ({total_pnl:+.2f} USDT) از هدف ({target_profit:.2f} USDT) گذشت. در حال بستن همه...")
             for pos in open_positions:
                 close_position_market(str(pos["id"]))
             return 
@@ -408,10 +428,7 @@ def manage_positions(state):
     iran = now + datetime.timedelta(hours=3, minutes=30)
     parts.append(f"🕒 آپدیت: <code>{iran.strftime('%H:%M')}</code>")
     final_text = "\n".join(parts)
-
-    if len(final_text) > 4096:
-        final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
-
+    if len(final_text) > 4096: final_text = final_text[:3900] + "\n\n⚠️ <i>پیام به دلیل محدودیت تلگرام کوتاه شد.</i>"
     if state.get("dashboard_id"):
         if not edit_telegram(state["dashboard_id"], final_text):
             state["dashboard_id"] = send_telegram(final_text)
