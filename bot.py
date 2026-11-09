@@ -12,7 +12,7 @@ NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
 # ===== تنظیمات سود کل پرتفوی (پویا) =====
 # درصد سود برای ۴ پوزیشن یا بیشتر
-PORTFOLIO_TP_PERCENT_DEFAULT = 5.71  
+PORTFOLIO_TP_PERCENT_DEFAULT = 5.51  
 # درصد سود برای ۳ پوزیشن
 PORTFOLIO_TP_PERCENT_3 = 7.0
 # درصد سود برای ۲ پوزیشن
