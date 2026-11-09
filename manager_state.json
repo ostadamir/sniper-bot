@@ -1,22 +1,7 @@
 {
-    "targets": {
-        "2639341483": {
-            "symbol": "DOGE",
-            "side": "LONG",
-            "entry": 0.0704,
-            "sl": 0.06945,
-            "tp1": 0.07098,
-            "tp2": 0.07178,
-            "tp3": 0.07258,
-            "tp4": 0.07345,
-            "current_stage": 0,
-            "closed": false,
-            "limit_stage": 2,
-            "fail_count": 0
-        }
-    },
+    "targets": {},
     "pending": {},
     "offset": 209535488,
     "dashboard_id": 481,
-    "last_closed": "\ud83d\udd34 LINK_SHORT | \ud83d\udd90\ufe0f \u0628\u0633\u062a\u0647 \u0634\u062f\u0647 \u062f\u0633\u062a\u06cc\n\u062f\u0644\u06cc\u0644 API: \u062f\u0633\u062a\u06cc | PnL: -0.85 USDT"
+    "last_closed": "\ud83d\udd34 DOGE_LONG | \ud83d\udd90\ufe0f \u0628\u0633\u062a\u0647 \u0634\u062f\u0647 \u062f\u0633\u062a\u06cc\n\u062f\u0644\u06cc\u0644 API: \u062f\u0633\u062a\u06cc | PnL: -0.03 USDT"
 }
