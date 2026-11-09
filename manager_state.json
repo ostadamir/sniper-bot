@@ -14,20 +14,6 @@
             "limit_stage": 99,
             "fail_count": 0
         },
-        "2638691490": {
-            "symbol": "SUI",
-            "side": "SHORT",
-            "entry": 0.8255,
-            "sl": 0.850162,
-            "tp1": 0.798162,
-            "tp2": 0.791971,
-            "tp3": 0.785781,
-            "tp4": 0.77959,
-            "current_stage": 0,
-            "closed": false,
-            "limit_stage": 99,
-            "fail_count": 0
-        },
         "2638693638": {
             "symbol": "LINK",
             "side": "SHORT",
@@ -46,5 +32,5 @@
     "pending": {},
     "offset": 209535487,
     "dashboard_id": 481,
-    "last_closed": "\ud83d\udd34 ARB_LONG | \ud83c\udfaf \u062a\u0627\u0631\u06af\u062a \u0646\u0647\u0627\u06cc\u06cc \u0632\u062f\u0647 \u0634\u062f\n\u062f\u0644\u06cc\u0644 API: \u062d\u062f \u0633\u0648\u062f | PnL: +4.86 USDT"
+    "last_closed": "\ud83d\udd34 SUI_SHORT | \u274c \u062d\u062f \u0636\u0631\u0631 \u0627\u0648\u0644\u06cc\u0647\n\u062f\u0644\u06cc\u0644 API: \u062d\u062f \u0636\u0631\u0631 | PnL: -2.51 USDT"
 }
