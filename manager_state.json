@@ -1,7 +1,78 @@
 {
-    "targets": {},
+    "targets": {
+        "2638686332": {
+            "symbol": "SOL",
+            "side": "SHORT",
+            "entry": 86.16,
+            "sl": 88.8272,
+            "tp1": 83.3941,
+            "tp2": 82.7473,
+            "tp3": 82.1005,
+            "tp4": 81.4537,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99,
+            "fail_count": 0
+        },
+        "2638691490": {
+            "symbol": "SUI",
+            "side": "SHORT",
+            "entry": 0.8255,
+            "sl": 0.850162,
+            "tp1": 0.798162,
+            "tp2": 0.791971,
+            "tp3": 0.785781,
+            "tp4": 0.77959,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99,
+            "fail_count": 0
+        },
+        "2638693638": {
+            "symbol": "LINK",
+            "side": "SHORT",
+            "entry": 10.517,
+            "sl": 10.8428,
+            "tp1": 10.1796,
+            "tp2": 10.1007,
+            "tp3": 10.0217,
+            "tp4": 9.9428,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99,
+            "fail_count": 0
+        },
+        "2638695902": {
+            "symbol": "OP",
+            "side": "SHORT",
+            "entry": 0.0989,
+            "sl": 0.102073,
+            "tp1": 0.09583,
+            "tp2": 0.095086,
+            "tp3": 0.094343,
+            "tp4": 0.0936,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99,
+            "fail_count": 0
+        },
+        "2638697545": {
+            "symbol": "ARB",
+            "side": "LONG",
+            "entry": 0.17748,
+            "sl": 0.172272,
+            "tp1": 0.183461,
+            "tp2": 0.184793,
+            "tp3": 0.186125,
+            "tp4": 0.187457,
+            "current_stage": 0,
+            "closed": false,
+            "limit_stage": 99,
+            "fail_count": 0
+        }
+    },
     "pending": {},
-    "offset": 209535482,
+    "offset": 209535487,
     "dashboard_id": 481,
     "last_closed": "\ud83d\udd34 SUI_SHORT | \ud83d\udd90\ufe0f \u0628\u0633\u062a\u0647 \u0634\u062f\u0647 \u062f\u0633\u062a\u06cc\n\u062f\u0644\u06cc\u0644 API: \u062f\u0633\u062a\u06cc | PnL: -0.53 USDT"
 }
