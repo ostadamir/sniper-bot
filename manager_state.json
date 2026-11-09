@@ -68,7 +68,7 @@
             "current_stage": 1,
             "closed": false,
             "limit_stage": 99,
-            "fail_count": 3
+            "fail_count": 4
         }
     },
     "pending": {},
