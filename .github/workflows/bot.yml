@@ -1,10 +1,6 @@
 name: Risk Manager Bot
 
 on:
-  # تایمر داخلی غیرفعال است تا با کرون‌جاب تداخل نداشته باشد
-  # schedule:
-  #   - cron: '*/16 * * * *'
-  
   workflow_dispatch:
 
 concurrency:
@@ -30,7 +26,6 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # 🛑 مرحله جدید: اجرای شنونده چنل آدم
       - name: Run Listener
         env:
           TG_SESSION: ${{ secrets.TG_SESSION }}
@@ -38,7 +33,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python listener.py
 
-      # اجرای ربات اصلی مدیریت سرمایه
       - name: Run Manager Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -53,4 +47,5 @@ jobs:
           git config --local user.name "GitHub Action"
           git add manager_state.json
           git commit -m "Update state" || echo "No changes to commit"
+          git pull --rebase origin main
           git push
