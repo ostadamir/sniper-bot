@@ -406,7 +406,7 @@ def manage_positions(state):
             card += f"وضعیت: {status_text}\n"
             if next_text: card += f"بعدی: {next_text}\n"
             card += f"🛑 استاپ: <code>{float(cur_sl):.5f}</code>\n"
-                if len("\n".join(auto_parts)) + len(card) < 3300:
+            if len("\n".join(auto_parts)) + len(card) < 3300:
                     auto_parts.append(card)
                 continue
 
