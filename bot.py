@@ -408,7 +408,7 @@ def manage_positions(state):
             card += f"🛑 استاپ: <code>{float(cur_sl):.5f}</code>\n"
             if len("\n".join(auto_parts)) + len(card) < 3300:
                     auto_parts.append(card)
-                continue
+            continue
 
             # --- شروع منطق پوزیشن‌های دستی ---
             manual_pnl += pnl; manual_margin += margin
