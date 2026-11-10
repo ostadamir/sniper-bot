@@ -1,7 +1,7 @@
 name: Risk Manager Bot
 
 on:
-  # تایمر داخلی گیت‌هاب غیرفعال شد تا با کرون‌جاب تداخل نداشته باشد
+  # تایمر داخلی غیرفعال است تا با کرون‌جاب تداخل نداشته باشد
   # schedule:
   #   - cron: '*/16 * * * *'
   
@@ -30,6 +30,15 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      # 🛑 مرحله جدید: اجرای شنونده چنل آدم
+      - name: Run Listener
+        env:
+          TG_SESSION: ${{ secrets.TG_SESSION }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python listener.py
+
+      # اجرای ربات اصلی مدیریت سرمایه
       - name: Run Manager Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
