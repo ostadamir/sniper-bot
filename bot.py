@@ -78,18 +78,27 @@ def close_position_market(pos_id):
     st, resp = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
     return st in (200, 201)
 
-# 🛑 این تابع رو تغییر دادم که آدرس‌های مختلف رو تست کنه
+# 🛑 این تابع رو تغییر دادم که به جای حدس زدن، خودِ TrueTrade لیست آدرس‌ها رو بده
 def get_futures_balance():
-    endpoints = ["/futures/account", "/futures/wallet", "/account", "/wallet", "/futures/balance"]
+    # 1. تلاش برای گرفتن لیست تمام مسیرهای موجود (API Discovery)
+    st, res = tt_request("GET", "/")
+    if st == 200 and isinstance(res, dict):
+        send_telegram(f"✅ لیست مسیرهای TrueTrade دریافت شد:\n<code>{json.dumps(res, ensure_ascii=False)[:1000]}</code>")
+        # حالا باید بگردیم دنبال کلیدهای مربوط به موجودی
+        for key in res.keys():
+            if "balance" in key.lower() or "account" in key.lower():
+                send_telegram(f"🔍 کلید مرتبط پیدا شد: <b>{key}</b>")
+        return 0.0
+
+    # 2. اگر لیست مسیرها جواب نداد، چند آدرس رایج دیگه رو تست کن
+    endpoints = ["/futures/balance", "/futures/account", "/account", "/wallet"]
     for ep in endpoints:
         st, res = tt_request("GET", ep)
         if st == 200 and isinstance(res, dict):
-            # اگه جواب داد، خود جواب رو برات می‌فرسته تا ساختارش رو ببینیم
             send_telegram(f"✅ آدرس <b>{ep}</b> جواب داد!\nساختار: <code>{json.dumps(res, ensure_ascii=False)}</code>")
-            # فعلاً 0 برمی‌گردونه تا برنامه کرش نکنه
             return 0.0
     
-    send_telegram("❌ هیچ‌کدام از آدرس‌های موجودی جواب ندادند.")
+    send_telegram("❌ متأسفانه هیچ آدرسی جواب نداد. لطفاً لاگ گیت‌هاب را بررسی کنید.")
     return 0.0
 
 def open_auto_position(symbol, side, margin_usdt, leverage):
