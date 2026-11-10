@@ -90,6 +90,9 @@ def get_futures_balance():
     st, res = tt_request("GET", "/futures/balance")
     if st == 200 and isinstance(res, dict):
         return float(res.get("availableBalance") or 0)
+    else:
+        # 🛑 چاپ خطای دقیق برای دیباگ
+        send_telegram(f"⚠️ API Balance Error: Status {st} - Res: {res}")
     return 0.0
 
 def open_auto_position(symbol, side, margin_usdt, leverage):
@@ -102,6 +105,8 @@ def open_auto_position(symbol, side, margin_usdt, leverage):
     }
     st, res = tt_request("POST", "/futures/positions", payload)
     if st not in (200, 201):
+        # 🛑 چاپ خطای دقیق برای دیباگ
+        send_telegram(f"⚠️ API Open Error: Status {st} - Res: {res}")
         print(f"!!! Error opening auto position: {st} - {res}")
     return st in (200, 201)
 
@@ -140,7 +145,6 @@ def handle_cancel(state, parts):
     if pos_key in state["pending"]: del state["pending"][pos_key]
     send_telegram(f"🛑 مدیریت {pos_key} لغو شد.")
 
-# ================= Commands =================
 def handle_new(state, parts):
     limit_stage = 99
     if len(parts) > 0 and parts[-1].upper() in ("RF", "SAFE"):
@@ -204,7 +208,7 @@ def handle_auto(state, parts):
 
     balance = get_futures_balance()
     if balance <= 0:
-        send_telegram("❌ خطا در خواندن موجودی فیوچرز.")
+        # پیام خطا در تابع get_futures_balance ارسال میشه
         return
     
     margin = balance * (AUTO_MARGIN_PERCENT / 100.0)
@@ -360,7 +364,6 @@ def manage_positions(state):
                 if is_auto: msg = "🤖 <b>اتصال خودکار!</b>"
                 send_telegram(f"{msg}\nپوزیشن {key_base} به سیگنال متصل شد.")
             else:
-                # اگه پوزیشن دستی بود
                 manual_unmanaged.append(key_base)
                 continue
 
@@ -391,7 +394,7 @@ def manage_positions(state):
         if is_auto:
             stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
             if stage > t["current_stage"]:
-                if stage == 5: # TP5 زده شد، کلوز کن
+                if stage == 5:
                     send_telegram(f"🏁 <b>TP5 برای {key_base} زده شد! کلوز پوزیشن.</b>")
                     close_position_market(pos_id)
                 else:
@@ -418,7 +421,7 @@ def manage_positions(state):
                 auto_len += len(card)
             continue
 
-        # منطق مخصوص پوزیشن‌های دستی (کد قبلی)
+        # منطق مخصوص پوزیشن‌های دستی
         manual_pnl += pnl
         manual_margin += margin
         d10 = (margin * 0.10) / size
@@ -516,7 +519,6 @@ def manage_positions(state):
             manual_parts.append(card)
             manual_len += len(card)
 
-    # پردازش پوزیشن‌های بسته شده
     for key in list(state["targets"].keys()):
         if key in open_keys or state["targets"][key].get("closed", False): continue
         match = [p for p in closed_positions if str(p.get("id")) == key]
@@ -541,19 +543,16 @@ def manage_positions(state):
         send_telegram(f"{prefix} <b>پوزیشن {name} بسته شد!</b>\nوضعیت: {status_msg}\nسود/ضرر: {pnl_text}")
         del state["targets"][key]
 
-    # چک کردن هدف سود کل (فقط برای پوزیشن‌های دستی)
     if manual_margin > 0:
         active_tp_percent = get_dynamic_tp_percent(len([t for t in state["targets"].values() if not t.get("is_auto", False)]))
         target_profit = manual_margin * (active_tp_percent / 100.0)
         if manual_pnl >= target_profit:
-            send_telegram(f"🚀 <b>رسیدن به هدف سود کل (دستی)!</b>\nکل سود شناور ({manual_pnl:+.2f} USDT) از هدف ({target_profit:.2f} USDT) گذشت. در حال بستن همه...")
+            send_telegram(f"🚀 <b>رسیدن به هدف سود کل (دستی)!</b>\nدر حال بستن همه...")
             for pos in open_positions:
-                # فقط پوزیشن‌های دستی رو ببند
                 if not state["targets"].get(str(pos["id"]), {}).get("is_auto", False):
                     close_position_market(str(pos["id"]))
             return 
 
-    # ساخت نهایی داشبورد دستی
     if not [p for p in open_positions if not state["targets"].get(str(p["id"]), {}).get("is_auto", False)]: 
         manual_parts.append("هیچ پوزیشن دستی بازی وجود ندارد. ⏳")
     else: 
@@ -566,26 +565,23 @@ def manage_positions(state):
     manual_parts.append(f"🕒 آپدیت: <code>{now.strftime('%H:%M')}</code>")
     final_manual_text = "\n".join(manual_parts)
 
-    # ساخت نهایی داشبورد خودکار
     if not [p for p in open_positions if state["targets"].get(str(p["id"]), {}).get("is_auto", False)]:
         auto_parts.append("هیچ پوزیشن خودکاری وجود ندارد. ⏳")
     if auto_unmanaged: auto_parts.append(f"⚠️ <i>بدون سیگنال: {', '.join(auto_unmanaged)}</i>")
     auto_parts.append(f"🕒 آپدیت: <code>{now.strftime('%H:%M')}</code>")
     final_auto_text = "\n".join(auto_parts)
 
-    # ارسال به تلگرام (دستی)
     if state.get("dashboard_id"):
         if not edit_telegram(state["dashboard_id"], final_manual_text):
             state["dashboard_id"] = send_telegram(final_manual_text)
     else:
         state["dashboard_id"] = send_telegram(final_manual_text)
 
-    # ارسال به تلگرام (خودکار)
     if state.get("auto_dashboard_id"):
         if not edit_telegram(state["auto_dashboard_id"], final_auto_text):
             state["auto_dashboard_id"] = send_telegram(final_auto_text)
     else:
-        if len(auto_parts) > 3: # فقط اگه پوزیشن خودکار وجود داشت بفرست
+        if len(auto_parts) > 3:
             state["auto_dashboard_id"] = send_telegram(final_auto_text)
 
 def run():
