@@ -46,7 +46,9 @@ def edit_telegram(message_id, text):
     except Exception as e:
         return True
 
+# ================= TrueTrade =================
 def tt_sign(secret, timestamp, method, uri):
+    # طبق داکیومنت: timestamp + METHOD + uri
     payload = f"{timestamp}{method.upper()}{uri}"
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -70,30 +72,45 @@ def tt_request(method, uri, payload=None):
 def patch_tpsl(pos_id, sl_value, tp_value):
     payload = {"stopLoss": str(round(sl_value, 6)), "takeProfit": str(round(tp_value, 6))}
     st, resp = tt_request("PATCH", f"/futures/positions/{pos_id}/tpsl", payload)
+    if st not in (200, 201):
+        print(f"!!! TPSL Error: {st} - {resp}")
     return st in (200, 201)
 
 def close_position_market(pos_id):
     st, resp = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
     return st in (200, 201)
 
-# 🛑 آدرس‌های جدید برای تست
+# 🛑 تابع موجودی بر اساس داکیومنت اصلاح شد
 def get_futures_balance():
-    endpoints = ["/v1/account/futures/summary", "/api/v1/futures/balance", "/futures/account/balance", "/account/balance"]
-    for ep in endpoints:
-        st, res = tt_request("GET", ep)
-        if st == 200 and isinstance(res, dict):
-            send_telegram(f"✅ آدرس <b>{ep}</b> جواب داد!\n<code>{json.dumps(res, ensure_ascii=False)}</code>")
-            return 0.0
-    send_telegram("❌ متأسفانه هیچ آدرسی جواب نداد.")
+    st, res = tt_request("GET", "/accounting/assets")
+    if st == 200 and isinstance(res, list):
+        for asset in res:
+            if asset.get("asset") == "USDT" and asset.get("accountType") == "futures":
+                return float(asset.get("balance") or 0)
+        send_telegram("⚠️ موجودی USDT در حساب فیوچرز پیدا نشد.")
+        return 0.0
+    send_telegram(f"⚠️ خطای موجودی: {st} - {res}")
     return 0.0
 
-def open_auto_position(symbol, side, margin_usdt, leverage):
-    payload = {"symbol": f"{symbol}USDT", "side": side.upper(), "type": "MARKET", "leverage": leverage, "margin": margin_usdt}
-    st, res = tt_request("POST", "/futures/orders", payload)
+# 🛑 تابع باز کردن پوزیشن بر اساس داکیومنت اصلاح شد
+def open_auto_position(symbol, side, margin_usdt, leverage, sl, tp):
+    # پارامترها دقیقا طبق عکسی که فرستادی
+    payload = {
+        "symbol": f"{symbol}USDT",
+        "side": side.upper(),
+        "tradeType": "MARKET",
+        "leverage": leverage,
+        "cost": str(round(margin_usdt, 2)), # این همون مارجینه
+        "walletType": "debit",
+        "stopLoss": str(sl),
+        "takeProfit": str(tp)
+    }
+    st, res = tt_request("POST", "/futures/positions", payload)
     if st not in (200, 201):
         send_telegram(f"⚠️ خطای باز کردن پوزیشن: Status {st} - {json.dumps(res, ensure_ascii=False)}")
     return st in (200, 201)
 
+# ================= State =================
 def new_state():
     return {"targets": {}, "pending": {}, "offset": 0, "dashboard_id": None, "auto_dashboard_id": None, "last_closed": NO_RECORD}
 
@@ -165,7 +182,8 @@ def handle_auto(state, parts):
     if balance <= 0: return
     
     margin = balance * (AUTO_MARGIN_PERCENT / 100.0)
-    if open_auto_position(symbol, sd, margin, AUTO_LEVERAGE):
+    # پارامترهای sl و tp (که همون tps[4] هست) رو هم مستقیم به تابع باز کردن پوزیشن می‌دیم
+    if open_auto_position(symbol, sd, margin, AUTO_LEVERAGE, s, tps[4]):
         pos_key = f"{symbol}_{sd}"
         new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "tp5": tps[4], "current_stage": 0, "closed": False, "is_auto": True, "limit_stage": 99, "fail_count": 0}
         state["pending"].setdefault(pos_key, []).append(new_sig)
@@ -189,6 +207,7 @@ def check_telegram(state):
                 elif line.startswith("/auto"): handle_auto(state, parts)
     except Exception as e: print("TG Check Error:", e)
 
+# ================= Logic =================
 def get_progress_bar(current, entry, target):
     if entry == target: return "░░░░░░░░░░"
     if target > entry: pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
