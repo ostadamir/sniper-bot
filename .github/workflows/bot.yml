@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: risk-manager-bot
+  group: tt-manager
   cancel-in-progress: false
 
 jobs:
