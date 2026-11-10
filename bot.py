@@ -10,7 +10,6 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 NO_RECORD = "هیچ پوزیشنی بسته نشده است."
 
-# ===== تنظیمات =====
 PORTFOLIO_TP_PERCENT_DEFAULT = 5.0  
 PORTFOLIO_TP_PERCENT_3 = 7.0
 PORTFOLIO_TP_PERCENT_2 = 8.5
@@ -47,7 +46,6 @@ def edit_telegram(message_id, text):
     except Exception as e:
         return True
 
-# ================= TrueTrade =================
 def tt_sign(secret, timestamp, method, uri):
     payload = f"{timestamp}{method.upper()}{uri}"
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -78,27 +76,15 @@ def close_position_market(pos_id):
     st, resp = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
     return st in (200, 201)
 
-# 🛑 این تابع رو تغییر دادم که به جای حدس زدن، خودِ TrueTrade لیست آدرس‌ها رو بده
+# 🛑 آدرس‌های جدید برای تست
 def get_futures_balance():
-    # 1. تلاش برای گرفتن لیست تمام مسیرهای موجود (API Discovery)
-    st, res = tt_request("GET", "/")
-    if st == 200 and isinstance(res, dict):
-        send_telegram(f"✅ لیست مسیرهای TrueTrade دریافت شد:\n<code>{json.dumps(res, ensure_ascii=False)[:1000]}</code>")
-        # حالا باید بگردیم دنبال کلیدهای مربوط به موجودی
-        for key in res.keys():
-            if "balance" in key.lower() or "account" in key.lower():
-                send_telegram(f"🔍 کلید مرتبط پیدا شد: <b>{key}</b>")
-        return 0.0
-
-    # 2. اگر لیست مسیرها جواب نداد، چند آدرس رایج دیگه رو تست کن
-    endpoints = ["/futures/balance", "/futures/account", "/account", "/wallet"]
+    endpoints = ["/v1/account/futures/summary", "/api/v1/futures/balance", "/futures/account/balance", "/account/balance"]
     for ep in endpoints:
         st, res = tt_request("GET", ep)
         if st == 200 and isinstance(res, dict):
-            send_telegram(f"✅ آدرس <b>{ep}</b> جواب داد!\nساختار: <code>{json.dumps(res, ensure_ascii=False)}</code>")
+            send_telegram(f"✅ آدرس <b>{ep}</b> جواب داد!\n<code>{json.dumps(res, ensure_ascii=False)}</code>")
             return 0.0
-    
-    send_telegram("❌ متأسفانه هیچ آدرسی جواب نداد. لطفاً لاگ گیت‌هاب را بررسی کنید.")
+    send_telegram("❌ متأسفانه هیچ آدرسی جواب نداد.")
     return 0.0
 
 def open_auto_position(symbol, side, margin_usdt, leverage):
@@ -108,7 +94,6 @@ def open_auto_position(symbol, side, margin_usdt, leverage):
         send_telegram(f"⚠️ خطای باز کردن پوزیشن: Status {st} - {json.dumps(res, ensure_ascii=False)}")
     return st in (200, 201)
 
-# ================= State =================
 def new_state():
     return {"targets": {}, "pending": {}, "offset": 0, "dashboard_id": None, "auto_dashboard_id": None, "last_closed": NO_RECORD}
 
@@ -138,7 +123,6 @@ def handle_cancel(state, parts):
     if pos_key in state["pending"]: del state["pending"][pos_key]
     send_telegram(f"🛑 مدیریت {pos_key} لغو شد.")
 
-# ================= Commands =================
 def handle_new(state, parts):
     limit_stage = 99
     if len(parts) > 0 and parts[-1].upper() in ("RF", "SAFE"):
@@ -205,7 +189,6 @@ def check_telegram(state):
                 elif line.startswith("/auto"): handle_auto(state, parts)
     except Exception as e: print("TG Check Error:", e)
 
-# ================= Logic =================
 def get_progress_bar(current, entry, target):
     if entry == target: return "░░░░░░░░░░"
     if target > entry: pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
@@ -283,7 +266,6 @@ def manage_positions(state):
         if key in open_keys or state["targets"][key].get("closed", False): continue
         match = [p for p in closed_positions if str(p.get("id")) == key]
         if not match: continue
-        t = state["targets"][key]; is_auto = t.get("is_auto", False)
         del state["targets"][key]
         send_telegram(f"🏁 پوزیشن {key} بسته شد.")
 
