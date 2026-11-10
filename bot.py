@@ -87,27 +87,34 @@ def close_position_market(pos_id):
     return st in (200, 201)
 
 def get_futures_balance():
-    st, res = tt_request("GET", "/futures/balance")
-    if st == 200 and isinstance(res, dict):
-        return float(res.get("availableBalance") or 0)
-    else:
-        # 🛑 چاپ خطای دقیق برای دیباگ
-        send_telegram(f"⚠️ API Balance Error: Status {st} - Res: {res}")
+    # تلاش برای پیدا کردن آدرس درست با چند روش
+    endpoints = ["/futures/account", "/account", "/futures/wallet"]
+    for ep in endpoints:
+        st, res = tt_request("GET", ep)
+        if st == 200 and isinstance(res, dict):
+            # استخراج موجودی
+            keys = ["availableBalance", "available", "balance", "totalEquity", "equity"]
+            for k in keys:
+                if k in res:
+                    return float(res[k])
+            send_telegram(f"✅ آدرس {ep} جواب داد. کلیدهای موجود: {list(res.keys())}")
+            return 0.0
+    send_telegram("❌ هیچ‌کدام از آدرس‌های موجودی جواب ندادند.")
     return 0.0
 
 def open_auto_position(symbol, side, margin_usdt, leverage):
+    # استفاده از آدرس استاندارد سفارشات
     payload = {
         "symbol": f"{symbol}USDT",
         "side": side.upper(),
         "type": "MARKET",
-        "margin": margin_usdt,
-        "leverage": leverage
+        "leverage": leverage,
+        "margin": margin_usdt
     }
-    st, res = tt_request("POST", "/futures/positions", payload)
+    st, res = tt_request("POST", "/futures/orders", payload)
     if st not in (200, 201):
-        # 🛑 چاپ خطای دقیق برای دیباگ
-        send_telegram(f"⚠️ API Open Error: Status {st} - Res: {res}")
         print(f"!!! Error opening auto position: {st} - {res}")
+        send_telegram(f"⚠️ خطای باز کردن پوزیشن: Status {st} - {res}")
     return st in (200, 201)
 
 # ================= State =================
@@ -145,6 +152,7 @@ def handle_cancel(state, parts):
     if pos_key in state["pending"]: del state["pending"][pos_key]
     send_telegram(f"🛑 مدیریت {pos_key} لغو شد.")
 
+# ================= Commands =================
 def handle_new(state, parts):
     limit_stage = 99
     if len(parts) > 0 and parts[-1].upper() in ("RF", "SAFE"):
@@ -208,7 +216,7 @@ def handle_auto(state, parts):
 
     balance = get_futures_balance()
     if balance <= 0:
-        # پیام خطا در تابع get_futures_balance ارسال میشه
+        # پیام خطا در تابع get_futures_balance فرستاده می‌شود
         return
     
     margin = balance * (AUTO_MARGIN_PERCENT / 100.0)
@@ -287,9 +295,7 @@ def next_auto_stage(t, is_long, entry, price):
     tp1, tp2, tp3, tp4, tp5 = t["tp1"], t["tp2"], t["tp3"], t["tp4"], t["tp5"]
     g = 1 if is_long else -1
     d1 = abs(tp1 - entry)
-    
     def hit(level): return price >= level if is_long else price <= level
-
     if t["current_stage"] == 0 and hit(tp2):
         return 1, entry + g * d1 * 0.10, "TP2 (قفل ۱۰٪)"
     elif t["current_stage"] == 1 and hit(entry + g * abs(tp3 - entry) * 0.5):
@@ -394,7 +400,7 @@ def manage_positions(state):
         if is_auto:
             stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
             if stage > t["current_stage"]:
-                if stage == 5:
+                if stage == 5: 
                     send_telegram(f"🏁 <b>TP5 برای {key_base} زده شد! کلوز پوزیشن.</b>")
                     close_position_market(pos_id)
                 else:
@@ -409,13 +415,11 @@ def manage_positions(state):
             status_text, next_text = stage_texts(stage, 99, is_auto=True)
             bar = get_progress_bar(price, entry, t["tp5"])
             emoji = "🟢" if roi >= 0 else "🔴"
-            
             card = f"{emoji} <b>{key_base}</b> ({leverage}X) | 🤖 خودکار\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
             card += f"وضعیت: {status_text}\n"
             if next_text: card += f"بعدی: {next_text}\n"
             card += f"🛑 استاپ: <code>{float(cur_sl):.5f}</code>\n"
-            
             if auto_len + len(card) < MAX_LEN:
                 auto_parts.append(card)
                 auto_len += len(card)
@@ -547,7 +551,7 @@ def manage_positions(state):
         active_tp_percent = get_dynamic_tp_percent(len([t for t in state["targets"].values() if not t.get("is_auto", False)]))
         target_profit = manual_margin * (active_tp_percent / 100.0)
         if manual_pnl >= target_profit:
-            send_telegram(f"🚀 <b>رسیدن به هدف سود کل (دستی)!</b>\nدر حال بستن همه...")
+            send_telegram(f"🚀 <b>رسیدن به هدف سود کل (دستی)!</b>\nکل سود شناور ({manual_pnl:+.2f} USDT) از هدف ({target_profit:.2f} USDT) گذشت. در حال بستن همه...")
             for pos in open_positions:
                 if not state["targets"].get(str(pos["id"]), {}).get("is_auto", False):
                     close_position_market(str(pos["id"]))
