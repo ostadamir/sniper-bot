@@ -19,6 +19,11 @@ MAX_AUTO_POSITIONS = 3
 AUTO_MARGIN_PERCENT = 7.0
 AUTO_LEVERAGE = 13
 
+# ===== تنظیمات اعتبارسنجی قیمت =====
+MIN_TP_DIST = 0.003      # حداقل فاصله تارگت از قیمت فعلی (0.3%)
+MIN_SL_DIST = 0.001      # حداقل فاصله استاپ از قیمت فعلی (0.1%)
+MAX_ENTRY_DEV = 0.01     # حداکثر فاصله قیمت سیگنال تا بازار (1%)
+
 def _norm(x):
     return str(x or "").strip().lower()
 
@@ -90,7 +95,7 @@ def edit_telegram(message_id, text):
         return True 
     except Exception as e: return True
 
-# ================= TrueTrade =================
+# ================= TrueTrade API =================
 def tt_sign(secret, timestamp, method, uri):
     payload = f"{timestamp}{method.upper()}{uri}"
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -120,30 +125,84 @@ def close_position_market(pos_id):
     st, resp = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
     return st in (200, 201)
 
+# 🛑 خواندن موجودی فیوچرز (بدون گارد اشتباه)
 def get_futures_balance():
-    st, res = tt_request("GET", "/accounting/assets?accountType=futures")
+    st, res = tt_request("GET", "/futures/assets")
     if st != 200:
-        st, res = tt_request("GET", "/accounting/assets")
-        if st != 200:
-            send_debug(f"balance HTTP {st}", res)
-            return None
+        send_debug(f"futures assets HTTP {st}", res)
+        return None
             
     rows = extract_list(res)
     for a in rows:
         if not isinstance(a, dict): continue
-        if _norm(a.get("asset")) == "usdt":
-            acc_type = _norm(a.get("accountType"))
-            if acc_type and acc_type != "futures":
-                continue
+        if _norm(a.get("asset") or a.get("currency")) == "usdt":
             try:
-                bal = float(a.get("availableBalance") or a.get("balance") or 0)
-                locked = float(a.get("lockedBalance") or 0)
-                return bal, locked
+                total = float(a.get("balance") or a.get("walletBalance") or 0)
+                avail = float(a.get("availableBalance") or 0)
+                locked = float(a.get("lockedBalance") or (total - avail) or 0)
+                return total, locked
             except ValueError:
                 pass
+                
     send_debug("futures USDT row not found - raw response", res)
     return None
 
+# ================= دریافت قیمت از منابع عمومی =================
+def get_market_price(symbol):
+    s = symbol.upper()
+    tries = [
+        (f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={s}-USDT", lambda j: j["data"]["price"]),
+        (f"https://www.okx.com/api/v5/market/ticker?instId={s}-USDT-SWAP", lambda j: j["data"][0]["last"]),
+        (f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={s}USDT", lambda j: j["result"]["list"][0]["lastPrice"]),
+    ]
+    for url, pick in tries:
+        try:
+            r = requests.get(url, timeout=8)
+            if r.status_code == 200:
+                p = float(pick(r.json()))
+                if p > 0: return p
+        except Exception:
+            pass
+    return None
+
+# ================= اعتبارسنجی قیمت‌ها =================
+def check_against_market(side, price, e, sl, tps, leverage):
+    side = side.upper()
+    tp_last, tp1 = tps[-1], tps[0]
+    
+    if side == "LONG":
+        if sl >= price * (1 - MIN_SL_DIST):
+            return "استاپ باید پایین‌تر از قیمت فعلی باشد (SL < Price)"
+        if tp_last <= price * (1 + MIN_TP_DIST):
+            return "تارگت آخر باید بالاتر از قیمت فعلی باشد (TP > Price)"
+        if price >= tp1:
+            return "قیمت از TP1 رد شده (سیگنال دیر شده)"
+    else:
+        if sl <= price * (1 + MIN_SL_DIST):
+            return "استاپ باید بالاتر از قیمت فعلی باشد (SL > Price)"
+        if tp_last >= price * (1 - MIN_TP_DIST):
+            return "تارگت آخر باید پایین‌تر از قیمت فعلی باشد (TP < Price)"
+        if price <= tp1:
+            return "قیمت از TP1 رد شده (سیگنال دیر شده)"
+            
+    dev = abs(price - e) / e
+    if dev > MAX_ENTRY_DEV:
+        return f"قیمت بازار {dev * 100:.1f}٪ از ورود سیگنال فاصله دارد"
+    if abs(price - sl) / price > 0.6 / leverage:
+        return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
+    return None
+
+def exchange_error_text(res):
+    if isinstance(res, dict):
+        errs = res.get("errors")
+        if isinstance(errs, list):
+            msgs = [str(x.get("message", x)) if isinstance(x, dict) else str(x) for x in errs]
+            if msgs: return "؛ ".join(msgs)
+        if res.get("message"):
+            return str(res["message"])
+    return str(res)[:300]
+
+# ================= باز کردن پوزیشن =================
 def open_auto_position(symbol, side, margin_usdt, leverage, sl, tp):
     payload = {
         "symbol": f"{symbol}USDT", "side": side.upper(), "tradeType": "MARKET",
@@ -152,12 +211,20 @@ def open_auto_position(symbol, side, margin_usdt, leverage, sl, tp):
     }
     st, res = tt_request("POST", "/futures/positions", payload)
     if st not in (200, 201):
-        send_debug(f"open position failed {st}", {"sent": payload, "response": res})
+        send_telegram(f"⚠️ صرافی پوزیشن را رد کرد ({st}):\n<code>{html.escape(exchange_error_text(res))}</code>")
+        send_debug("open position failed", {"sent": payload, "response": res})
         return None
     send_debug("open position OK (raw response)", res)
     return res if res else {}
 
-# ================= State =================
+def handle_balance():
+    probe = {}
+    for ep in ("/futures/assets", "/accounting/assets"):
+        st, res = tt_request("GET", ep)
+        probe[ep] = {"status": st, "usdt": extract_list(res) if st == 200 else res}
+    send_debug("balance probe", probe)
+
+# ================= State Management =================
 def new_state():
     return {"targets": {}, "pending": {}, "offset": 0, "dashboard_id": None, "auto_dashboard_id": None, "last_closed": NO_RECORD}
 
@@ -246,6 +313,18 @@ def handle_auto(state, parts):
             send_telegram(f"⚠️ {symbol}_{sd} همین الان باز است؛ پوزیشن جدید باز نشد.")
             return
 
+    # 🛑 دریافت قیمت بازار و اعتبارسنجی قبل از ارسال به صرافی
+    price = get_market_price(symbol)
+    if price is None:
+        send_telegram(f"⚠️ قیمت بازار {symbol} گرفته نشد؛ پوزیشن باز نشد.")
+        return
+    why = check_against_market(sd, price, e, s, tps, AUTO_LEVERAGE)
+    if why:
+        send_telegram(f"⛔ /auto {symbol}_{sd} رد شد: {why}\n"
+                      f"قیمت فعلی {fmt_num(price)} | ورود {fmt_num(e)} | "
+                      f"SL {fmt_num(s)} | TP5 {fmt_num(tps[4])}")
+        return
+
     bal = get_futures_balance()
     if bal is None: return
     balance, locked = bal
@@ -282,13 +361,14 @@ def check_telegram(state):
                 if line.startswith("/cancel"): handle_cancel(state, parts)
                 elif line.startswith("/new"): handle_new(state, parts)
                 elif line.startswith("/auto"): handle_auto(state, parts)
+                elif line.startswith("/balance"): handle_balance()
                 
         results = r.get("result", [])
         if results:
             ack_updates(results[-1]["update_id"])
     except Exception as e: print("TG Check Error:", e)
 
-# ================= Logic =================
+# ================= Logic & Dashboard =================
 def get_progress_bar(current, entry, target):
     if entry == target: return "░░░░░░░░░░"
     if target > entry: pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
@@ -507,7 +587,6 @@ def manage_positions(state):
         if not match: continue
         last = match[0]; why = last.get("closingReason") or ""
         t = state["targets"][key]; is_auto = t.get("is_auto", False); stage = t.get("current_stage", 0)
-        reasons = {"STOPLOSS": "حد ضرر", "TAKEPROFIT": "حد سود", "MANUAL": "دستی"}
         status_msg = get_close_status(stage, why, is_auto=is_auto)
         sym = last.get("symbol", "").replace("USDT", ""); sd = last.get("side", "")
         name = f"{sym}_{sd}" if sym and sd else key
