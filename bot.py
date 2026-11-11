@@ -22,7 +22,6 @@ AUTO_LEVERAGE = 13
 # ===== تنظیمات اعتبارسنجی قیمت =====
 MIN_TP_DIST = 0.003      # حداقل فاصله تارگت از قیمت فعلی (0.3%)
 MIN_SL_DIST = 0.001      # حداقل فاصله استاپ از قیمت فعلی (0.1%)
-MAX_ENTRY_DEV = 0.01     # حداکثر فاصله قیمت سیگنال تا بازار (1%)
 
 def _norm(x):
     return str(x or "").strip().lower()
@@ -125,7 +124,7 @@ def close_position_market(pos_id):
     st, resp = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
     return st in (200, 201)
 
-# 🛑 خواندن موجودی فیوچرز (بدون گارد اشتباه)
+# 🛑 فیکس نهایی: خواندن موجودی فیوچرز طبق ساختار symbol و totalAssets
 def get_futures_balance():
     st, res = tt_request("GET", "/futures/assets")
     if st != 200:
@@ -135,11 +134,11 @@ def get_futures_balance():
     rows = extract_list(res)
     for a in rows:
         if not isinstance(a, dict): continue
-        if _norm(a.get("asset") or a.get("currency")) == "usdt":
+        if _norm(a.get("symbol")) == "usdt":
             try:
-                total = float(a.get("balance") or a.get("walletBalance") or 0)
+                total = float(a.get("totalAssets") or 0)
                 avail = float(a.get("availableBalance") or 0)
-                locked = float(a.get("lockedBalance") or (total - avail) or 0)
+                locked = total - avail
                 return total, locked
             except ValueError:
                 pass
@@ -165,7 +164,7 @@ def get_market_price(symbol):
             pass
     return None
 
-# ================= اعتبارسنجی قیمت‌ها =================
+# ================= اعتبارسنجی قیمت‌ها (بدون شرط ۱ درصد)
 def check_against_market(side, price, e, sl, tps, leverage):
     side = side.upper()
     tp_last, tp1 = tps[-1], tps[0]
@@ -185,9 +184,6 @@ def check_against_market(side, price, e, sl, tps, leverage):
         if price <= tp1:
             return "قیمت از TP1 رد شده (سیگنال دیر شده)"
             
-    dev = abs(price - e) / e
-    if dev > MAX_ENTRY_DEV:
-        return f"قیمت بازار {dev * 100:.1f}٪ از ورود سیگنال فاصله دارد"
     if abs(price - sl) / price > 0.6 / leverage:
         return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
     return None
@@ -313,7 +309,7 @@ def handle_auto(state, parts):
             send_telegram(f"⚠️ {symbol}_{sd} همین الان باز است؛ پوزیشن جدید باز نشد.")
             return
 
-    # 🛑 دریافت قیمت بازار و اعتبارسنجی قبل از ارسال به صرافی
+    # دریافت قیمت بازار و اعتبارسنجی
     price = get_market_price(symbol)
     if price is None:
         send_telegram(f"⚠️ قیمت بازار {symbol} گرفته نشد؛ پوزیشن باز نشد.")
