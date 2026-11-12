@@ -335,11 +335,10 @@ def next_auto_stage(t, is_long, entry, price):
     if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05, "TP2 (قفل ۵٪)"
     elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5, "نصفه راه TP3"
     elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"], "TP3 (قفل TP1)"
-    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp1"] + g * abs(t["tp2"] - t["tp1"]) * 0.5, "TP4 (قفل TP1.5)"
+    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp3"], "TP4 (قفل TP3)" # 👈 تغییر اینجا اعمال شد
     elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"], "TP5 (کلوز)"
     return t["current_stage"], 0, ""
 
-# متن‌های جدید برای داشبورد (در مسیر و وضعیت)
 STAGE_TEXT = {
     0: ("⏳ منتظر ۱۰٪ سود", "۱۰٪ سود (ریسک‌فری)"),
     1: ("✅ ریسک‌فری شد", "۲۰٪ سود (قفل ۱۰٪)"),
@@ -360,7 +359,7 @@ AUTO_STAGE_TEXT = {
     1: ("✅ TP2 زده شد", "نصفه راه TP3"),
     2: ("✅ نصفه راه TP3", "TP3"),
     3: ("✅ TP3 زده شد", "TP4"),
-    4: ("✅ TP4 زده شد", "TP5 (کلوز)")
+    4: ("✅ TP4 زده شد (قفل TP3)", "TP5 (کلوز)") # 👈 متن داشبورد هم آپدیت شد
 }
 
 def get_close_status(stage, why, is_auto=False):
