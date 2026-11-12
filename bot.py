@@ -6,6 +6,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
+# 🛑 DRY_RUN: برای تست روی 1 باشه، برای پول واقعی 0
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
@@ -42,14 +43,13 @@ def send_telegram(text):
             r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": strip_tags(text)[:4000]}, timeout=10)
             if r2.status_code == 200: return r2.json().get("result", {}).get("message_id")
     except Exception as e:
-        print("TG Error:", repr(e))
+        print("TG Error:", repr(e), flush=True)
     return None
 
 def notify(msg):
-    print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "))
+    print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "), flush=True)
     return send_telegram(msg)
 
-# 👇 این تابع فیکس شد که اگه پیام پاک شده بود، False برگردونه تا پیام جدید ساخته بشه
 def edit_telegram(message_id, text):
     if not message_id: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
@@ -58,7 +58,7 @@ def edit_telegram(message_id, text):
         if res.status_code == 200: return True
         if res.status_code == 400:
             if "message is not modified" in res.text: return True
-            if "message to edit not found" in res.text: return False # پیام پاک شده، باید پیام جدید بفرستیم
+            if "message to edit not found" in res.text: return False 
             r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=10)
             return r2.status_code == 200
         return True
@@ -70,17 +70,21 @@ def tt_sign(secret, timestamp, method, uri):
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 def tt_request(method, uri, payload=None):
-    if not TRUETRADE_KEY or not TRUETRADE_SECRET: return 500, {}
+    if not TRUETRADE_KEY or not TRUETRADE_SECRET: 
+        print("Missing TT Keys", flush=True)
+        return 500, {}
     timestamp = str(int(time.time() * 1000))
     signature = tt_sign(TRUETRADE_SECRET, timestamp, method, uri)
     headers = {"X-API-Key": TRUETRADE_KEY, "X-Timestamp": timestamp, "X-Signature": signature, "Content-Type": "application/json"}
     try:
-        if method == "GET": res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=10)
-        elif method == "PATCH": res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
-        elif method == "POST": res = requests.post(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=10)
+        if method == "GET": res = requests.get(f"{TRUETRADE_URL}{uri}", headers=headers, timeout=15)
+        elif method == "PATCH": res = requests.patch(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=15)
+        elif method == "POST": res = requests.post(f"{TRUETRADE_URL}{uri}", headers=headers, json=payload, timeout=15)
         else: return 500, {}
         return res.status_code, res.json() if res.text else {}
-    except Exception as e: return 500, str(e)
+    except Exception as e: 
+        print(f"TT Request Error: {e}", flush=True)
+        return 500, str(e)
 
 def patch_tpsl(pos_id, sl_value, tp_value):
     if DRY_RUN: return True 
@@ -277,6 +281,7 @@ def process_queue(state):
     if not os.path.exists(QUEUE_FILE): return
     with open(QUEUE_FILE, "r") as f: lines = f.readlines()
     os.remove(QUEUE_FILE)
+    print(f"process_queue: {len(lines)} line(s)", flush=True)
     for line in lines:
         if line.strip().startswith("/auto"):
             try: handle_auto(state, line.strip().split())
@@ -305,7 +310,7 @@ def check_telegram(state):
                     elif cmd.startswith("/"): notify(f"❓ ناشناخته: {cmd}")
                 except Exception as e: notify(f"⚠️ خطا در {cmd}: {html.escape(repr(e))}")
         if r.get("result"): requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": state["offset"], "limit": 1, "timeout": 0})
-    except Exception as e: print("TG Error:", e)
+    except Exception as e: print("TG Error:", e, flush=True)
 
 # ================= Logic & Dashboard =================
 def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stage):
@@ -336,7 +341,9 @@ def next_auto_stage(t, is_long, entry, price):
 
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
-    if status != 200 or not isinstance(response, dict): return
+    if status != 200 or not isinstance(response, dict):
+        notify(f"⚠️ خطا در دریافت لیست پوزیشن‌ها ({status}): {str(response)[:100]}")
+        return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
@@ -432,7 +439,6 @@ def manage_positions(state):
     if manual_unmanaged: manual_parts.append(f"⚠️ بدون سیگنال: {', '.join(manual_unmanaged)}")
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
-    # 👇 فیکس نهایی داشبوردها (ساخت مجدد در صورت پاک شدن)
     if state.get("dashboard_id"):
         if not edit_telegram(state["dashboard_id"], "\n".join(manual_parts)):
             state["dashboard_id"] = send_telegram("\n".join(manual_parts))
@@ -446,11 +452,13 @@ def manage_positions(state):
         state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
 
 def run():
+    print("Checking...", flush=True)
     state = load_state()
     process_queue(state)
     check_telegram(state)
     manage_positions(state)
     save_state(state)
+    print("Done.", flush=True)
 
 if __name__ == "__main__":
     run()
