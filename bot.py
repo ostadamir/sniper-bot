@@ -38,9 +38,11 @@ def send_telegram(text):
     try:
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
         if res.status_code == 200: return res.json().get("result", {}).get("message_id")
+        print(f"TG HTML Error: {res.status_code} | {res.text}", flush=True)
         if res.status_code == 400: 
             r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": strip_tags(text)[:4000]}, timeout=10)
             if r2.status_code == 200: return r2.json().get("result", {}).get("message_id")
+            print(f"TG Plain Error: {r2.status_code} | {r2.text}", flush=True)
     except Exception as e:
         print("TG Error:", repr(e), flush=True)
     return None
@@ -400,7 +402,8 @@ def manage_positions(state):
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
                     if patch_tpsl(pos_id, payload_sl, t["tp5"]): cur_sl = payload_sl; t["current_stage"] = stage
             emoji = "🟢" if roi >= 0 else "🔴"
-            auto_parts.append(f"{emoji} <b>{key_base}</b> | 🤖 (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}")
+            card = f"{emoji} <b>{key_base}</b> | 🤖 (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}"
+            if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
             continue
 
         manual_pnl += pnl; manual_margin += margin
@@ -418,7 +421,8 @@ def manage_positions(state):
                 cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
 
         emoji = "🟢" if roi >= 0 else "🔴"
-        manual_parts.append(f"{emoji} <b>{key_base}</b> | ⚙️ (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}")
+        card = f"{emoji} <b>{key_base}</b> | ⚙️ (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}"
+        if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
 
     for key in list(state["targets"].keys()):
         if key in open_keys or state["targets"][key].get("closed"): continue
@@ -438,7 +442,12 @@ def manage_positions(state):
 
     if not manual_parts[1:]: manual_parts.append("پوزیشن دستی باز نیست.")
     else: manual_parts.insert(1, f"📈 سود کل: {manual_pnl:+.2f} USDT")
-    if manual_unmanaged: manual_parts.append(f"⚠️ بدون سیگنال: {', '.join(manual_unmanaged)}")
+    
+    if manual_unmanaged: 
+        unmanaged_str = ', '.join(manual_unmanaged[:5])
+        if len(manual_unmanaged) > 5: unmanaged_str += f" + {len(manual_unmanaged)-5} more"
+        manual_parts.append(f"⚠️ بدون سیگنال: {unmanaged_str}")
+        
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
     if state.get("dashboard_id"):
