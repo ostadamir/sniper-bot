@@ -59,8 +59,8 @@ def run_listener():
         for msg in messages:
             if not msg.text: continue
             
-            # ⚠️ فعلاً برای تست روی ۱ ساعت (3600) تنظیم شده. بعداً به 420 (۷ دقیقه) تغییر بده.
-            if (now_utc - msg.date).total_seconds() > 3600: continue 
+            # ⚠️ فیلتر ۷ دقیقه (420 ثانیه) برای سیگنال‌های تازه
+            if (now_utc - msg.date).total_seconds() > 420: continue 
 
             text = msg.text
             text_upper = text.upper()
