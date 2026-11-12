@@ -1,5 +1,6 @@
 import time, os, requests, hmac, hashlib, json
 import datetime, html, re
+import statistics
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -12,7 +13,6 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
 
-# ===== تنظیمات مدیریت سرمایه =====
 PORTFOLIO_TP_PERCENT_1 = 10.0  
 PORTFOLIO_TP_PERCENT_2 = 2.8   
 PORTFOLIO_TP_PERCENT_3 = 3.3   
@@ -147,45 +147,51 @@ def check_against_market(side, price, e, sl, tps, leverage):
     if abs(price - sl) / price > 0.6 / leverage: return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
     return None
 
+# 👇 الگوریتم هوشمند اصلاح چندبعدی تارگت‌ها
 def valid_signal(side, e, s, tps, leverage):
     side = side.upper()
-    fixed_tps = list(tps)
-    fix_msg = ""
-    
     if side == "LONG":
-        if s >= e or fixed_tps[0] <= e: return "استاپ یا تارگت اول اشتباه است", tps, ""
-        if not (fixed_tps[0] < fixed_tps[1] < fixed_tps[2] < fixed_tps[3]):
-            return "ترتیب تارگت‌های میانی اشتباه است", tps, ""
-        
-        if fixed_tps[4] <= fixed_tps[3]:
-            d2 = fixed_tps[1] - fixed_tps[0]
-            d3 = fixed_tps[2] - fixed_tps[1]
-            d4 = fixed_tps[3] - fixed_tps[2]
-            avg_d = (d2 + d3 + d4) / 3.0
-            if avg_d <= 0: return "فاصله تارگت‌ها نامعتبر است", tps, ""
-            new_tp5 = fixed_tps[3] + avg_d
-            fix_msg = f"🔧 تارگت ۵ اشتباه بود، اصلاح شد به {new_tp5:.4f}"
-            fixed_tps[4] = new_tp5
-            
+        if s >= e: return "استاپ باید پایین‌تر از ورود باشد", tps, ""
     elif side == "SHORT":
-        if s <= e or fixed_tps[0] >= e: return "استاپ یا تارگت اول اشتباه است", tps, ""
-        if not (fixed_tps[0] > fixed_tps[1] > fixed_tps[2] > fixed_tps[3]):
-            return "ترتیب تارگت‌های میانی اشتباه است", tps, ""
-            
-        if fixed_tps[4] >= fixed_tps[3]:
-            d2 = fixed_tps[0] - fixed_tps[1]
-            d3 = fixed_tps[1] - fixed_tps[2]
-            d4 = fixed_tps[2] - fixed_tps[3]
-            avg_d = (d2 + d3 + d4) / 3.0
-            if avg_d <= 0: return "فاصله تارگت‌ها نامعتبر است", tps, ""
-            new_tp5 = fixed_tps[3] - avg_d
-            fix_msg = f"🔧 تارگت ۵ اشتباه بود، اصلاح شد به {new_tp5:.4f}"
-            fixed_tps[4] = new_tp5
+        if s <= e: return "استاپ باید بالاتر از ورود باشد", tps, ""
     else:
         return "side", tps, ""
+
+    # محاسبه فاصله بین نقاط (Entry تا TP1، TP1 تا TP2 و...)
+    points = [e] + tps
+    diffs = [abs(points[i+1] - points[i]) for i in range(len(points) - 1)]
+    
+    # پیدا کردن گام استاندارد (میانه - Median)
+    try:
+        standard_step = statistics.median(diffs)
+    except:
+        standard_step = 0
         
+    if standard_step <= 0: return "فاصله تارگت‌ها نامعتبر است", tps, ""
+
+    # بازسازی تارگت‌های درست بر اساس گام استاندارد
+    g = 1 if side == "LONG" else -1
+    fixed_tps = []
+    for i in range(1, 6):
+        new_tp = e + (g * standard_step * i)
+        fixed_tps.append(round(new_tp, 6))
+        
+    # مقایسه تارگت‌های اصلی با تارگت‌های محاسبه‌شده و ساخت پیام
+    fix_msg = ""
+    for i in range(5):
+        # اگر اختلاف تارگت اصلی با محاسبه‌شده بیشتر از ۳۰ درصد گام بود، یعنی تایپو شده
+        if abs(fixed_tps[i] - tps[i]) > (standard_step * 0.3):
+            fix_msg += f"🔧 TP{i+1} اصلاح شد از {tps[i]} به {fixed_tps[i]}\n"
+
+    # اعتبارسنجی نهایی روی تارگت‌های اصلاح‌شده
+    if side == "LONG" and not (e < fixed_tps[0] < fixed_tps[1] < fixed_tps[2] < fixed_tps[3] < fixed_tps[4]):
+        return "ترتیب تارگت‌های اصلاح‌شده اشتباه است", tps, ""
+    if side == "SHORT" and not (e > fixed_tps[0] > fixed_tps[1] > fixed_tps[2] > fixed_tps[3] > fixed_tps[4]):
+        return "ترتیب تارگت‌های اصلاح‌شده اشتباه است", tps, ""
+
     if abs(e - s) / e > 0.6 / leverage: return "sl_too_far", tps, ""
-    return None, fixed_tps, fix_msg
+    
+    return None, fixed_tps, fix_msg.strip()
 
 def get_dynamic_tp_percent(num_positions):
     if num_positions == 1: return PORTFOLIO_TP_PERCENT_1
@@ -271,7 +277,7 @@ def handle_auto(state, parts):
         notify(f"❌ /auto {symbol}_{sd} رد شد ({err})."); 
         return
     if fix_msg:
-        notify(f"⚠️ {symbol}_{sd}: {fix_msg}")
+        notify(f"⚠️ {symbol}_{sd}:\n{fix_msg}")
         tps = fixed_tps
 
     st, resp = tt_request("GET", "/futures/positions")
@@ -584,7 +590,6 @@ def manage_positions(state):
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
-    # 👇 اضافه کردن ساعت آپدیت به هر دو داشبورد
     now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3, minutes=30)
     time_str = now.strftime('%H:%M:%S')
     manual_parts.append(f"\n🕒 <b>آخرین آپدیت:</b> {time_str}")
