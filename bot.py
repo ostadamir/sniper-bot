@@ -6,14 +6,12 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
-# 🛑 DRY_RUN: پیش‌فرض 1 (تست). برای پول واقعی در تنظیمات گیت‌هاب روی 0 تنظیم شود
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
 
-# ===== تنظیمات هدف سود کل سبد (فقط پوزیشن‌های دستی) =====
 PORTFOLIO_TP_PERCENT_1 = 10.0  
 PORTFOLIO_TP_PERCENT_2 = 4.0   
 PORTFOLIO_TP_PERCENT_3 = 2.8   
@@ -40,7 +38,7 @@ def send_telegram(text):
     try:
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
         if res.status_code == 200: return res.json().get("result", {}).get("message_id")
-        if res.status_code == 400: # اگر HTML ایراد داشت، به صورت متن ساده بفرست
+        if res.status_code == 400: 
             r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": strip_tags(text)[:4000]}, timeout=10)
             if r2.status_code == 200: return r2.json().get("result", {}).get("message_id")
     except Exception as e:
@@ -51,16 +49,20 @@ def notify(msg):
     print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "))
     return send_telegram(msg)
 
+# 👇 این تابع فیکس شد که اگه پیام پاک شده بود، False برگردونه تا پیام جدید ساخته بشه
 def edit_telegram(message_id, text):
     if not message_id: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
     try:
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
         if res.status_code == 200: return True
-        if res.status_code == 400 and "not modified" not in res.text:
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=10)
+        if res.status_code == 400:
+            if "message is not modified" in res.text: return True
+            if "message to edit not found" in res.text: return False # پیام پاک شده، باید پیام جدید بفرستیم
+            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=10)
+            return r2.status_code == 200
         return True
-    except: return True
+    except: return False
 
 # ================= TrueTrade API =================
 def tt_sign(secret, timestamp, method, uri):
@@ -208,7 +210,6 @@ def handle_new(state, parts):
         limit_stage = 1 if parts[-1].upper() == "RF" else 2
         parts = parts[:-1]
 
-    # هندل کردن حالت ۳ تارگتی (اگر کاربر ۴ تارگت نداد، تارگت ۴ رو می‌سازیم)
     if len(parts) == 8:
         try: parts.append(str(round(float(parts[7]) + (float(parts[7]) - float(parts[6])), 8)))
         except: pass
@@ -262,7 +263,7 @@ def handle_auto(state, parts):
         notify(f"⚠️ مارجین ناکافی (نیاز {target_margin:.2f}$, آزاد {available:.2f}$)."); return
 
     res = open_auto_position(symbol, sd, target_margin, AUTO_LEVERAGE, s, tps[4])
-    if res is None: return # DRY_RUN or Error already notified
+    if res is None: return
     
     new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "tp5": tps[4], "current_stage": 0, "closed": False, "is_auto": True, "limit_stage": 99, "fail_count": 0}
     pos_id = extract_id(res)
@@ -326,7 +327,6 @@ def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stag
 def next_auto_stage(t, is_long, entry, price):
     g = 1 if is_long else -1; d1 = abs(t["tp1"] - entry)
     def hit(lvl): return price >= lvl if is_long else price <= lvl
-    # قفل ۵ درصد برای شنونده در TP2
     if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05
     elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5
     elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"]
@@ -394,7 +394,6 @@ def manage_positions(state):
             auto_parts.append(f"{emoji} <b>{key_base}</b> | 🤖 (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}")
             continue
 
-        # --- مدیریت دستی ---
         manual_pnl += pnl; manual_margin += margin
         price_10 = entry + ((margin * 0.10) / size if is_long else -(margin * 0.10) / size)
         
@@ -420,7 +419,6 @@ def manage_positions(state):
             notify(f"{prefix} بسته شد: {match[0].get('symbol','').replace('USDT','')} (PnL: {float(match[0].get('realizedPnL') or 0):+.2f}$)")
             del state["targets"][key]
 
-    # 🎯 هدف سود کل سبد (فقط دستی‌ها)
     if manual_margin > 0:
         target_pct = get_dynamic_tp_percent(len([t for t in state["targets"].values() if not t.get("is_auto")]))
         if manual_pnl >= (manual_margin * target_pct / 100.0):
@@ -434,11 +432,18 @@ def manage_positions(state):
     if manual_unmanaged: manual_parts.append(f"⚠️ بدون سیگنال: {', '.join(manual_unmanaged)}")
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
-    if state.get("dashboard_id"): edit_telegram(state["dashboard_id"], "\n".join(manual_parts))
-    else: state["dashboard_id"] = send_telegram("\n".join(manual_parts))
+    # 👇 فیکس نهایی داشبوردها (ساخت مجدد در صورت پاک شدن)
+    if state.get("dashboard_id"):
+        if not edit_telegram(state["dashboard_id"], "\n".join(manual_parts)):
+            state["dashboard_id"] = send_telegram("\n".join(manual_parts))
+    else:
+        state["dashboard_id"] = send_telegram("\n".join(manual_parts))
 
-    if state.get("auto_dashboard_id"): edit_telegram(state["auto_dashboard_id"], "\n".join(auto_parts))
-    elif len(auto_parts) > 2: state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
+    if state.get("auto_dashboard_id"):
+        if not edit_telegram(state["auto_dashboard_id"], "\n".join(auto_parts)):
+            state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
+    else:
+        state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
 
 def run():
     state = load_state()
