@@ -342,6 +342,21 @@ def next_auto_stage(t, is_long, entry, price):
 STAGE_TEXT = {0: "منتظر ۱۰٪ سود", 1: "ریسک‌فری شد", 2: "قفل سود ۱۰٪", 3: "استاپ ۲۲٪ قفل شد", 4: "استاپ ۴۰٪ قفل شد", 5: "TP1 زده شد", 6: "استاپ روی TP1", 7: "TP2 زده شد", 8: "استاپ روی TP2", 9: "TP3 زده شد", 10: "استاپ روی TP3", 11: "TP4 زده شد", 12: "شکار سود"}
 AUTO_STAGE_TEXT = {0: "منتظر TP2", 1: "TP2 (قفل ۵٪)", 2: "نصفه راه TP3", 3: "TP3 (قفل TP1)", 4: "TP4 (قفل TP1.5)", 5: "TP5 (کلوز)"}
 
+def get_close_status(stage, why, is_auto=False):
+    if why == "TAKEPROFIT": return "🎯 تارگت نهایی (TP5) زده شد"
+    if why == "MANUAL": return "🖐️ بسته شده به صورت دستی"
+    
+    if why == "STOPLOSS":
+        if stage == 0: return "❌ حد ضرر اولیه (Initial SL)"
+        if is_auto:
+            return "🛡️ استاپ ترِیلینگ (قفل سود خودکار)"
+        else:
+            if stage == 1: return "⚖️ حد ضرر ریسک‌فری (Breakeven)"
+            if stage == 2: return "💰 استاپ قفل سود ۱۰٪"
+            if stage >= 3: return "🛡️ استاپ ترِیلینگ (قفل سود پله‌ای)"
+            
+    return "⚖️ بسته شده (نامشخص)"
+
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
     if status != 200 or not isinstance(response, dict):
@@ -449,8 +464,24 @@ def manage_positions(state):
         if key in open_keys or state["targets"][key].get("closed"): continue
         match = [p for p in closed_positions if str(p.get("id")) == key]
         if match:
-            prefix = "🤖" if state["targets"][key].get("is_auto") else "🏁"
-            notify(f"{prefix} بسته شد: {match[0].get('symbol','').replace('USDT','')} (PnL: {float(match[0].get('realizedPnL') or 0):+.2f}$)")
+            last = match[0]
+            t = state["targets"][key]
+            is_auto = t.get("is_auto", False)
+            stage = t.get("current_stage", 0)
+            why = last.get("closingReason") or ""
+            
+            status_msg = get_close_status(stage, why, is_auto)
+            prefix = "🤖" if is_auto else "🏁"
+            sym = last.get("symbol", "").replace("USDT", "")
+            sd = last.get("side", "")
+            pnl = float(last.get("realizedPnL") or 0)
+            emoji = "🟢" if pnl >= 0 else "🔴"
+            
+            msg = f"{prefix} <b>پوزیشن {sym}_{sd} بسته شد!</b>\n"
+            msg += f"وضعیت: {status_msg}\n"
+            msg += f"سود/ضرر: <code>{pnl:+.2f} USDT</code> {emoji}"
+            
+            notify(msg)
             del state["targets"][key]
 
     if manual_margin > 0:
