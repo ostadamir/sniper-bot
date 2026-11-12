@@ -6,6 +6,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
+# 🛑 DRY_RUN: برای پول واقعی باید در سکرت‌های گیت‌هاب روی 0 تنظیم شود
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
@@ -284,7 +285,6 @@ def process_queue(state):
 def check_telegram(state):
     try:
         r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": state.get("offset", 0), "timeout": 5}, timeout=10).json()
-        print(f"📩 TG Updates Received: {len(r.get('result', []))}", flush=True)
         if not r.get("ok"): return
         for u in r.get("result", []):
             state["offset"] = u["update_id"] + 1
@@ -308,31 +308,41 @@ def check_telegram(state):
     except Exception as e: print("TG Error:", e, flush=True)
 
 # ================= Logic & Dashboard =================
+def get_progress_bar(current, entry, target):
+    if entry == target: return "░░░░░░░░░░"
+    if target > entry: pct = max(0.0, min(1.0, (current - entry) / (target - entry)))
+    else: pct = max(0.0, min(1.0, (entry - current) / (entry - target)))
+    filled = int(pct * 10)
+    return "█" * filled + "░" * (10 - filled)
+
 def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stage):
     d1, d2, d3, d4 = abs(t["tp1"] - entry), abs(t["tp2"] - t["tp1"]), abs(t["tp3"] - t["tp2"]), abs(t["tp4"] - t["tp3"])
     g = 1 if is_long else -1
     p40, p22, p70, p80 = entry + g*d1*0.4, entry + g*d1*0.22, entry + g*d1*0.7, entry + g*d1*0.8
     h2, h3, h4 = t["tp1"] + g*d2*0.5, t["tp2"] + g*d3*0.5, t["tp3"] + g*d4*0.5
     def hit(lvl): return price >= lvl if is_long else price <= lvl
-    chain = [(0, "roi", 10.0, entry, ""), (1, "roi", 20.0, price_10, ""), (2, "price", p40, p22, ""), (3, "price", p70, p40, ""), (4, "price", t["tp1"], p80, ""), (5, "price", h2, t["tp1"], ""), (6, "price", t["tp2"], h2, ""), (7, "price", h3, t["tp2"], ""), (8, "price", t["tp3"], h3, ""), (9, "price", h4, t["tp3"], ""), (10, "price", t["tp4"], h4, "")]
-    stage, new_sl, new_tp = t["current_stage"], cur_sl, cur_tp
-    for st, kind, level, sl_to, _ in chain:
+    chain = [(0, "roi", 10.0, entry, "ریسک‌فری"), (1, "roi", 20.0, price_10, "قفل سود ۱۰٪"), (2, "price", p40, p22, "عبور از ۴۰٪ TP1"), (3, "price", p70, p40, "عبور از ۷۰٪ TP1"), (4, "price", t["tp1"], p80, "رسیدن به TP1"), (5, "price", h2, t["tp1"], "عبور از ۵۰٪ TP2"), (6, "price", t["tp2"], h2, "رسیدن به TP2"), (7, "price", h3, t["tp2"], "عبور از ۵۰٪ TP3"), (8, "price", t["tp3"], h3, "رسیدن به TP3"), (9, "price", h4, t["tp3"], "عبور از ۵۰٪ TP4"), (10, "price", t["tp4"], h4, "رسیدن به TP4")]
+    stage, new_sl, new_tp, reason = t["current_stage"], cur_sl, cur_tp, ""
+    for st, kind, level, sl_to, why in chain:
         if stage == st and stage < max_stage:
             if (roi >= level) if kind == "roi" else hit(level):
-                new_sl, stage = sl_to, st + 1
+                new_sl, stage, reason = sl_to, st + 1, why
     if stage >= 11 and stage < max_stage and hit(cur_tp):
         new_tp, new_sl, stage = (cur_tp + d4 if is_long else cur_tp - d4), t["tp4"], stage + 1
-    return stage, new_sl, new_tp
+    return stage, new_sl, new_tp, reason
 
 def next_auto_stage(t, is_long, entry, price):
     g = 1 if is_long else -1; d1 = abs(t["tp1"] - entry)
     def hit(lvl): return price >= lvl if is_long else price <= lvl
-    if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05
-    elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5
-    elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"]
-    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp1"] + g * abs(t["tp2"] - t["tp1"]) * 0.5
-    elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"]
-    return t["current_stage"], 0
+    if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05, "TP2 (قفل ۵٪)"
+    elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5, "نصفه راه TP3"
+    elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"], "TP3 (قفل TP1)"
+    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp1"] + g * abs(t["tp2"] - t["tp1"]) * 0.5, "TP4 (قفل TP1.5)"
+    elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"], "TP5 (کلوز)"
+    return t["current_stage"], 0, ""
+
+STAGE_TEXT = {0: "منتظر ۱۰٪ سود", 1: "ریسک‌فری شد", 2: "قفل سود ۱۰٪", 3: "استاپ ۲۲٪ قفل شد", 4: "استاپ ۴۰٪ قفل شد", 5: "TP1 زده شد", 6: "استاپ روی TP1", 7: "TP2 زده شد", 8: "استاپ روی TP2", 9: "TP3 زده شد", 10: "استاپ روی TP3", 11: "TP4 زده شد", 12: "شکار سود"}
+AUTO_STAGE_TEXT = {0: "منتظر TP2", 1: "TP2 (قفل ۵٪)", 2: "نصفه راه TP3", 3: "TP3 (قفل TP1)", 4: "TP4 (قفل TP1.5)", 5: "TP5 (کلوز)"}
 
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
@@ -341,8 +351,6 @@ def manage_positions(state):
         return
     
     items = response.get("items", [])
-    print(f"📊 TT Positions Fetched: {len(items)}", flush=True)
-    
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     open_keys = set()
@@ -372,7 +380,7 @@ def manage_positions(state):
         is_auto = t.get("is_auto", False)
         price = float(pos.get("markPrice") or 0)
         cur_sl = float(pos.get("stopLoss") or 0)
-        cur_tp = float(pos.get("takeProfit") or 0) # 👈 این خط برگشت
+        cur_tp = float(pos.get("takeProfit") or 0)
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0)
         size = float(pos.get("size") or 0)
@@ -389,17 +397,34 @@ def manage_positions(state):
         tol = max(1e-8, price * 1e-5)
 
         if is_auto:
-            stage, new_sl = next_auto_stage(t, is_long, entry, price)
+            stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
             if stage > t["current_stage"]:
                 if stage == 5: close_position_market(pos_id)
-                elif new_sl > 0:
+                elif reason:
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
                     if patch_tpsl(pos_id, payload_sl, t["tp5"]): cur_sl = payload_sl; t["current_stage"] = stage
+            
+            # --- Dashboard UI (Auto) ---
+            stage_txt = AUTO_STAGE_TEXT.get(t["current_stage"], "")
+            target = t["tp5"]
+            if t["current_stage"] == 0: target = t["tp2"]
+            elif t["current_stage"] == 1: target = entry + (abs(t["tp3"] - entry) * 0.5) * (1 if is_long else -1)
+            elif t["current_stage"] == 2: target = t["tp3"]
+            elif t["current_stage"] == 3: target = t["tp4"]
+            
+            bar = get_progress_bar(price, entry, target)
             emoji = "🟢" if roi >= 0 else "🔴"
-            card = f"{emoji} <b>{key_base}</b> | 🤖 (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}"
+            card = f"{emoji} <b>{key_base}</b> | 🤖 خودکار\n"
+            card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
+            card += f"💰 ورود: <code>{entry:.4f}</code> | فعلی: <code>{price:.4f}</code>\n"
+            card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+            card += f"🎯 هدف بعدی: <code>{target:.4f}</code>\n"
+            card += f"📌 وضعیت: {stage_txt}\n"
+            card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
             if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
             continue
 
+        # --- Manual ---
         manual_pnl += pnl; manual_margin += margin
         price_10 = entry + ((margin * 0.10) / size if is_long else -(margin * 0.10) / size)
         
@@ -408,16 +433,32 @@ def manage_positions(state):
             restore = sl0 if t["current_stage"] == 0 else (price_10 if t["current_stage"] >= 2 else entry)
             if patch_tpsl(pos_id, restore, t["tp4"]): cur_sl = restore
 
-        # 👈 فراخوانی تابع با تمام ۹ ورودی درست
-        stage, new_sl, new_tp = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
-        
-        if new_sl != cur_sl or new_tp != t.get("cur_tp", 0):
+        stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
+        if reason:
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             if patch_tpsl(pos_id, final_sl, new_tp): 
                 cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
 
+        # --- Dashboard UI (Manual) ---
+        stage_txt = STAGE_TEXT.get(t["current_stage"], "")
+        target = t["tp4"]
+        if t["current_stage"] < 5: target = t["tp1"]
+        elif t["current_stage"] < 7: target = t["tp2"]
+        elif t["current_stage"] < 9: target = t["tp3"]
+        
+        bar = get_progress_bar(price, entry, target)
         emoji = "🟢" if roi >= 0 else "🔴"
-        card = f"{emoji} <b>{key_base}</b> | ⚙️ (سود: {roi:+.1f}%) | استاپ: {cur_sl:.4f}"
+        mode_val = t.get("limit_stage", 99)
+        mode_txt = "🔒 RF" if mode_val == 1 else "🛡️ SAFE" if mode_val == 2 else "⚙️ عادی"
+        
+        card = f"{emoji} <b>{key_base}</b> | {mode_txt}\n"
+        card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
+        card += f"💰 ورود: <code>{entry:.4f}</code> | فعلی: <code>{price:.4f}</code>\n"
+        card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+        card += f"🎯 هدف بعدی: <code>{target:.4f}</code>\n"
+        card += f"📌 وضعیت: {stage_txt}\n"
+        card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
+        
         if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
 
     for key in list(state["targets"].keys()):
@@ -437,7 +478,7 @@ def manage_positions(state):
             return 
 
     if not manual_parts[1:]: manual_parts.append("پوزیشن دستی باز نیست.")
-    else: manual_parts.insert(1, f"📈 سود کل: {manual_pnl:+.2f} USDT")
+    else: manual_parts.insert(1, f"📈 سود کل: <code>{manual_pnl:+.2f} USDT</code>")
     
     if manual_unmanaged: 
         unmanaged_str = ', '.join(manual_unmanaged[:5])
@@ -446,6 +487,7 @@ def manage_positions(state):
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
+    # ارسال پیام‌های جدید با طراحی جدید
     if state.get("dashboard_id"): delete_telegram(state["dashboard_id"])
     state["dashboard_id"] = send_telegram("\n".join(manual_parts))
 
