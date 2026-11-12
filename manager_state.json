@@ -1,7 +1,24 @@
 {
-    "targets": {},
+    "targets": {
+        "2650044676": {
+            "symbol": "1000PEPE",
+            "side": "SHORT",
+            "entry": 0.004367499999999999,
+            "sl": 0.00445,
+            "tp1": 0.0043,
+            "tp2": 0.00425,
+            "tp3": 0.0042,
+            "tp4": 0.00415,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": false,
+            "limit_stage": 99,
+            "fail_count": 0,
+            "cur_tp": 0.00415
+        }
+    },
     "pending": {},
-    "offset": 0,
+    "offset": 209535519,
     "dashboard_id": 739,
     "auto_dashboard_id": 740
 }
