@@ -319,25 +319,25 @@ def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stag
     p40, p22, p70, p80 = entry + g*d1*0.4, entry + g*d1*0.22, entry + g*d1*0.7, entry + g*d1*0.8
     h2, h3, h4 = t["tp1"] + g*d2*0.5, t["tp2"] + g*d3*0.5, t["tp3"] + g*d4*0.5
     def hit(lvl): return price >= lvl if is_long else price <= lvl
-    chain = [(0, "roi", 10.0, entry, ""), (1, "roi", 20.0, price_10, ""), (2, "price", p40, p22, ""), (3, "price", p70, p40, ""), (4, "price", t["tp1"], p80, ""), (5, "price", h2, t["tp1"], ""), (6, "price", t["tp2"], h2, ""), (7, "price", h3, t["tp2"], ""), (8, "price", t["tp3"], h3, ""), (9, "price", h4, t["tp3"], ""), (10, "price", t["tp4"], h4, "")]
-    stage, new_sl, new_tp = t["current_stage"], cur_sl, cur_tp
-    for st, kind, level, sl_to, _ in chain:
+    chain = [(0, "roi", 10.0, entry, "ریسک‌فری"), (1, "roi", 20.0, price_10, "قفل سود ۱۰٪"), (2, "price", p40, p22, "عبور از ۴۰٪ TP1"), (3, "price", p70, p40, "عبور از ۷۰٪ TP1"), (4, "price", t["tp1"], p80, "TP1 زده شد"), (5, "price", h2, t["tp1"], "عبور از ۵۰٪ TP2"), (6, "price", t["tp2"], h2, "TP2 زده شد"), (7, "price", h3, t["tp2"], "عبور از ۵۰٪ TP3"), (8, "price", t["tp3"], h3, "TP3 زده شد"), (9, "price", h4, t["tp3"], "عبور از ۵۰٪ TP4"), (10, "price", t["tp4"], h4, "TP4 زده شد")]
+    stage, new_sl, new_tp, reason = t["current_stage"], cur_sl, cur_tp, ""
+    for st, kind, level, sl_to, why in chain:
         if stage == st and stage < max_stage:
             if (roi >= level) if kind == "roi" else hit(level):
-                new_sl, stage = sl_to, st + 1
+                new_sl, stage, reason = sl_to, st + 1, why
     if stage >= 11 and stage < max_stage and hit(cur_tp):
         new_tp, new_sl, stage = (cur_tp + d4 if is_long else cur_tp - d4), t["tp4"], stage + 1
-    return stage, new_sl, new_tp
+    return stage, new_sl, new_tp, reason
 
 def next_auto_stage(t, is_long, entry, price):
     g = 1 if is_long else -1; d1 = abs(t["tp1"] - entry)
     def hit(lvl): return price >= lvl if is_long else price <= lvl
-    if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05
-    elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5
-    elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"]
-    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp1"] + g * abs(t["tp2"] - t["tp1"]) * 0.5
-    elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"]
-    return t["current_stage"], 0
+    if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05, "TP2 (قفل ۵٪)"
+    elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5, "نصفه راه TP3"
+    elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"], "TP3 (قفل TP1)"
+    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp1"] + g * abs(t["tp2"] - t["tp1"]) * 0.5, "TP4 (قفل TP1.5)"
+    elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"], "TP5 (کلوز)"
+    return t["current_stage"], 0, ""
 
 STAGE_TEXT = {0: "منتظر ۱۰٪ سود", 1: "ریسک‌فری شد", 2: "قفل سود ۱۰٪", 3: "استاپ ۲۲٪ قفل شد", 4: "استاپ ۴۰٪ قفل شد", 5: "TP1 زده شد", 6: "استاپ روی TP1", 7: "TP2 زده شد", 8: "استاپ روی TP2", 9: "TP3 زده شد", 10: "استاپ روی TP3", 11: "TP4 زده شد", 12: "شکار سود"}
 AUTO_STAGE_TEXT = {0: "منتظر TP2", 1: "TP2 (قفل ۵٪)", 2: "نصفه راه TP3", 3: "TP3 (قفل TP1)", 4: "TP4 (قفل TP1.5)", 5: "TP5 (کلوز)"}
@@ -359,8 +359,7 @@ def get_close_status(stage, why, is_auto=False):
 
 def manage_positions(state):
     status, response = tt_request("GET", "/futures/positions")
-    if status != 200 or not isinstance(response, dict):
-        return
+    if status != 200 or not isinstance(response, dict): return
     
     items = response.get("items", [])
     open_positions = [p for p in items if p.get("status") == "OPENED"]
@@ -408,12 +407,16 @@ def manage_positions(state):
         tol = max(1e-8, price * 1e-5)
 
         if is_auto:
-            stage, new_sl = next_auto_stage(t, is_long, entry, price)
+            stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
             if stage > t["current_stage"]:
                 if stage == 5: close_position_market(pos_id)
-                elif new_sl > 0:
+                elif reason:
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-                    if patch_tpsl(pos_id, payload_sl, t["tp5"]): cur_sl = payload_sl; t["current_stage"] = stage
+                    if patch_tpsl(pos_id, payload_sl, t["tp5"]):
+                        cur_sl = payload_sl
+                        t["current_stage"] = stage
+                        # 👇 ارسال پیام اعلان رسیدن به مرحله جدید
+                        notify(f"🔔 <b>مرحله جدید!</b>\nپوزیشن {key_base} به <b>{reason}</b> رسید.\nاستاپ به {cur_sl:.4f} منتقل شد.")
             
             stage_txt = AUTO_STAGE_TEXT.get(t["current_stage"], "")
             target = t["tp5"]
@@ -439,11 +442,15 @@ def manage_positions(state):
             restore = sl0 if t["current_stage"] == 0 else (price_10 if t["current_stage"] >= 2 else entry)
             if patch_tpsl(pos_id, restore, t["tp4"]): cur_sl = restore
 
-        stage, new_sl, new_tp = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
-        if new_sl != cur_sl or new_tp != t.get("cur_tp", 0):
+        stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
+        if reason:
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             if patch_tpsl(pos_id, final_sl, new_tp): 
-                cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
+                cur_sl = final_sl
+                t["current_stage"] = stage
+                t["cur_tp"] = new_tp
+                # 👇 ارسال پیام اعلان رسیدن به مرحله جدید
+                notify(f"🔔 <b>مرحله جدید!</b>\nپوزیشن {key_base} به <b>{reason}</b> رسید.\nاستاپ به {cur_sl:.4f} منتقل شد.")
 
         stage_txt = STAGE_TEXT.get(t["current_stage"], "")
         target = t["tp4"]
@@ -468,7 +475,7 @@ def manage_positions(state):
             t = state["targets"][key]
             is_auto = t.get("is_auto", False)
             stage = t.get("current_stage", 0)
-            why = last.get("closingReason") or ""
+            why = last.get("closingReason") or "MANUAL"
             
             status_msg = get_close_status(stage, why, is_auto)
             prefix = "🤖" if is_auto else "🏁"
