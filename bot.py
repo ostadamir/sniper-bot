@@ -47,23 +47,16 @@ def send_telegram(text):
         print("TG Error:", repr(e), flush=True)
     return None
 
+def delete_telegram(message_id):
+    if not message_id: return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
+    try:
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id}, timeout=5)
+    except: pass
+
 def notify(msg):
     print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "), flush=True)
     return send_telegram(msg)
-
-def edit_telegram(message_id, text):
-    if not message_id: return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
-    try:
-        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
-        if res.status_code == 200: return True
-        if res.status_code == 400:
-            if "message is not modified" in res.text: return True
-            if "message to edit not found" in res.text: return False 
-            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=10)
-            return r2.status_code == 200
-        return True
-    except: return False
 
 # ================= TrueTrade API =================
 def tt_sign(secret, timestamp, method, uri):
@@ -450,17 +443,12 @@ def manage_positions(state):
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
-    if state.get("dashboard_id"):
-        if not edit_telegram(state["dashboard_id"], "\n".join(manual_parts)):
-            state["dashboard_id"] = send_telegram("\n".join(manual_parts))
-    else:
-        state["dashboard_id"] = send_telegram("\n".join(manual_parts))
+    # 🛑 تغییر نهایی: پاک کردن داشبورد قبلی و ارسال پیام جدید برای دیدن نوتیفیکیشن
+    if state.get("dashboard_id"): delete_telegram(state["dashboard_id"])
+    state["dashboard_id"] = send_telegram("\n".join(manual_parts))
 
-    if state.get("auto_dashboard_id"):
-        if not edit_telegram(state["auto_dashboard_id"], "\n".join(auto_parts)):
-            state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
-    else:
-        state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
+    if state.get("auto_dashboard_id"): delete_telegram(state["auto_dashboard_id"])
+    state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
 
 def run():
     print("Checking...", flush=True)
