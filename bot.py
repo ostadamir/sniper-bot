@@ -339,15 +339,36 @@ def next_auto_stage(t, is_long, entry, price):
     elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"], "TP5 (کلوز)"
     return t["current_stage"], 0, ""
 
-STAGE_TEXT = {0: "منتظر ۱۰٪ سود", 1: "ریسک‌فری شد", 2: "قفل سود ۱۰٪", 3: "استاپ ۲۲٪ قفل شد", 4: "استاپ ۴۰٪ قفل شد", 5: "TP1 زده شد", 6: "استاپ روی TP1", 7: "TP2 زده شد", 8: "استاپ روی TP2", 9: "TP3 زده شد", 10: "استاپ روی TP3", 11: "TP4 زده شد", 12: "شکار سود"}
-AUTO_STAGE_TEXT = {0: "منتظر TP2", 1: "TP2 (قفل ۵٪)", 2: "نصفه راه TP3", 3: "TP3 (قفل TP1)", 4: "TP4 (قفل TP1.5)", 5: "TP5 (کلوز)"}
+# متن‌های جدید برای داشبورد (در مسیر و وضعیت)
+STAGE_TEXT = {
+    0: ("⏳ منتظر ۱۰٪ سود", "۱۰٪ سود (ریسک‌فری)"),
+    1: ("✅ ریسک‌فری شد", "۲۰٪ سود (قفل ۱۰٪)"),
+    2: ("✅ قفل سود ۱۰٪", "عبور از ۴۰٪ مسیر TP1"),
+    3: ("✅ استاپ ۲۲٪ قفل شد", "عبور از ۷۰٪ مسیر TP1"),
+    4: ("✅ استاپ ۴۰٪ قفل شد", "رسیدن به TP1"),
+    5: ("✅ TP1 زده شد", "عبور از ۵۰٪ مسیر TP2"),
+    6: ("✅ استاپ روی TP1", "رسیدن به TP2"),
+    7: ("✅ TP2 زده شد", "عبور از ۵۰٪ مسیر TP3"),
+    8: ("✅ استاپ روی TP2", "رسیدن به TP3"),
+    9: ("✅ TP3 زده شد", "عبور از ۵۰٪ مسیر TP4"),
+    10: ("✅ استاپ روی TP3", "رسیدن به TP4"),
+    11: ("✅ TP4 زده شد", "شکار سود")
+}
+
+AUTO_STAGE_TEXT = {
+    0: ("منتظر TP2", "TP2"),
+    1: ("✅ TP2 زده شد", "نصفه راه TP3"),
+    2: ("✅ نصفه راه TP3", "TP3"),
+    3: ("✅ TP3 زده شد", "TP4"),
+    4: ("✅ TP4 زده شد", "TP5 (کلوز)")
+}
 
 def get_close_status(stage, why, is_auto=False):
-    if why == "TAKEPROFIT": return "🎯 تارگت نهایی (TP5) زده شد"
+    if why == "TAKEPROFIT": return "🎯 تارگت نهایی زده شد"
     if why == "MANUAL": return "🖐️ بسته شده به صورت دستی"
     
     if why == "STOPLOSS":
-        if stage == 0: return "❌ حد ضرر اولیه (Initial SL)"
+        if stage == 0: return "❌ حد ضرر اولیه"
         if is_auto:
             return "🛡️ استاپ ترِیلینگ (قفل سود خودکار)"
         else:
@@ -412,13 +433,9 @@ def manage_positions(state):
                 if stage == 5: close_position_market(pos_id)
                 elif reason:
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-                    if patch_tpsl(pos_id, payload_sl, t["tp5"]):
-                        cur_sl = payload_sl
-                        t["current_stage"] = stage
-                        # 👇 ارسال پیام اعلان رسیدن به مرحله جدید
-                        notify(f"🔔 <b>مرحله جدید!</b>\nپوزیشن {key_base} به <b>{reason}</b> رسید.\nاستاپ به {cur_sl:.4f} منتقل شد.")
+                    if patch_tpsl(pos_id, payload_sl, t["tp5"]): cur_sl = payload_sl; t["current_stage"] = stage
             
-            stage_txt = AUTO_STAGE_TEXT.get(t["current_stage"], "")
+            stage_txt, path_txt = AUTO_STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
             target = t["tp5"]
             if t["current_stage"] == 0: target = t["tp2"]
             elif t["current_stage"] == 1: target = entry + (abs(t["tp3"] - entry) * 0.5) * (1 if is_long else -1)
@@ -429,8 +446,10 @@ def manage_positions(state):
             emoji = "🟢" if roi >= 0 else "🔴"
             card = f"{emoji} <b>{key_base}</b> | 🤖 خودکار\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
-            card += f"🛑 استاپ: <code>{cur_sl:.4f}</code> | 🎯 هدف: <code>{target:.4f}</code>\n"
-            card += f"📌 وضعیت: {stage_txt}\n📊 پیشرفت: <code>[{bar}]</code>\n"
+            card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+            card += f"📌 وضعیت: {stage_txt}\n"
+            if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
+            card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
             if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
             continue
 
@@ -446,13 +465,9 @@ def manage_positions(state):
         if reason:
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             if patch_tpsl(pos_id, final_sl, new_tp): 
-                cur_sl = final_sl
-                t["current_stage"] = stage
-                t["cur_tp"] = new_tp
-                # 👇 ارسال پیام اعلان رسیدن به مرحله جدید
-                notify(f"🔔 <b>مرحله جدید!</b>\nپوزیشن {key_base} به <b>{reason}</b> رسید.\nاستاپ به {cur_sl:.4f} منتقل شد.")
+                cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
 
-        stage_txt = STAGE_TEXT.get(t["current_stage"], "")
+        stage_txt, path_txt = STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
         target = t["tp4"]
         if t["current_stage"] < 5: target = t["tp1"]
         elif t["current_stage"] < 7: target = t["tp2"]
@@ -463,8 +478,10 @@ def manage_positions(state):
         
         card = f"{emoji} <b>{key_base}</b>\n"
         card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
-        card += f"🛑 استاپ: <code>{cur_sl:.4f}</code> | 🎯 هدف: <code>{target:.4f}</code>\n"
-        card += f"📌 وضعیت: {stage_txt}\n📊 پیشرفت: <code>[{bar}]</code>\n"
+        card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+        card += f"📌 وضعیت: {stage_txt}\n"
+        if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
+        card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
         if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
 
     for key in list(state["targets"].keys()):
