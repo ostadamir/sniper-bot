@@ -1,1 +1,42 @@
-{}
+{
+    "targets": {},
+    "pending": {
+        "BTC_LONG": [
+            {
+                "symbol": "BTC",
+                "side": "LONG",
+                "entry": 80000.0,
+                "sl": 78500.0,
+                "tp1": 81000.0,
+                "tp2": 82000.0,
+                "tp3": 83000.0,
+                "tp4": 84000.0,
+                "current_stage": 0,
+                "closed": false,
+                "is_auto": false,
+                "limit_stage": 99,
+                "fail_count": 0
+            }
+        ],
+        "ETH_SHORT": [
+            {
+                "symbol": "ETH",
+                "side": "SHORT",
+                "entry": 3000.0,
+                "sl": 3060.0,
+                "tp1": 2950.0,
+                "tp2": 2900.0,
+                "tp3": 2850.0,
+                "tp4": 2800.0,
+                "current_stage": 0,
+                "closed": false,
+                "is_auto": false,
+                "limit_stage": 1,
+                "fail_count": 0
+            }
+        ]
+    },
+    "offset": 209535513,
+    "dashboard_id": 650,
+    "auto_dashboard_id": 651
+}
