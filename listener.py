@@ -59,7 +59,7 @@ def run_listener():
         for msg in messages:
             if not msg.text: continue
             
-            # ⚠️ برای تست، زمان رو ۱ ساعت (3600 ثانیه) کردم. بعداً می‌تونی به 420 برگردونی.
+            # ⚠️ فعلاً برای تست روی ۱ ساعت (3600) تنظیم شده. بعداً به 420 (۷ دقیقه) تغییر بده.
             if (now_utc - msg.date).total_seconds() > 3600: continue 
 
             text = msg.text
