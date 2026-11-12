@@ -16,12 +16,12 @@ PORTFOLIO_TP_PERCENT_1 = 10.0
 PORTFOLIO_TP_PERCENT_2 = 4.0   
 PORTFOLIO_TP_PERCENT_3 = 2.8   
 PORTFOLIO_TP_PERCENT_4 = 3.8   
-PORTFOLIO_TP_PERCENT_5 = 4.0   
-PORTFOLIO_TP_PERCENT_DEFAULT = 4.0
+PORTFOLIO_TP_PERCENT_5 = 3.9   
+PORTFOLIO_TP_PERCENT_DEFAULT = 3.9
 
 MAX_AUTO_POSITIONS = 3
 AUTO_MARGIN_PERCENT = 7.0
-AUTO_LEVERAGE = 28
+AUTO_LEVERAGE = 28 # 👈 لوریج روی ۲۸ تنظیم شد
 MAX_ENTRY_DEV = 0.01
 MIN_TP_DIST = 0.003      
 MIN_SL_DIST = 0.001      
@@ -143,16 +143,52 @@ def check_against_market(side, price, e, sl, tps, leverage):
         if sl <= price * (1 + MIN_SL_DIST): return "استاپ باید بالاتر از قیمت باشد"
         if tp_last >= price * (1 - MIN_TP_DIST): return "تارگت آخر باید پایین‌تر از قیمت باشد"
         if price <= tp1: return "قیمت از TP1 رد شده (سیگنال دیر شده)"
-    if abs(price - sl) / price > 0.6 / leverage: return "استاپ برای این لوریج خیلی دور است"
+    if abs(price - sl) / price > 0.6 / leverage: return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
     return None
 
+# 👇 این تابع حالا اشتباهات تایپی را خودش اصلاح می‌کند
 def valid_signal(side, e, s, tps, leverage):
-    if side == "LONG": ok = s < e < tps[0] and all(tps[i] < tps[i + 1] for i in range(len(tps) - 1))
-    elif side == "SHORT": ok = s > e > tps[0] and all(tps[i] > tps[i + 1] for i in range(len(tps) - 1))
-    else: return "side"
-    if not ok: return "order"
-    if abs(e - s) / e > 0.6 / leverage: return "sl_too_far"
-    return None
+    side = side.upper()
+    fixed_tps = list(tps)
+    fix_msg = ""
+    
+    # 1. چک کردن پایه‌ها (اگر خراب باشن، کلاً رد میشه)
+    if side == "LONG":
+        if s >= e or fixed_tps[0] <= e: return "استاپ یا تارگت اول اشتباه است", tps, ""
+        if not (fixed_tps[0] < fixed_tps[1] < fixed_tps[2] < fixed_tps[3]):
+            return "ترتیب تارگت‌های میانی اشتباه است", tps, ""
+        
+        # 2. اصلاح TP5 اگر خراب بود
+        if fixed_tps[4] <= fixed_tps[3]:
+            d2 = fixed_tps[1] - fixed_tps[0]
+            d3 = fixed_tps[2] - fixed_tps[1]
+            d4 = fixed_tps[3] - fixed_tps[2]
+            avg_d = (d2 + d3 + d4) / 3.0
+            if avg_d <= 0: return "فاصله تارگت‌ها نامعتبر است", tps, ""
+            new_tp5 = fixed_tps[3] + avg_d
+            fix_msg = f"🔧 تارگت ۵ اشتباه بود، اصلاح شد به {new_tp5:.4f}"
+            fixed_tps[4] = new_tp5
+            
+    elif side == "SHORT":
+        if s <= e or fixed_tps[0] >= e: return "استاپ یا تارگت اول اشتباه است", tps, ""
+        if not (fixed_tps[0] > fixed_tps[1] > fixed_tps[2] > fixed_tps[3]):
+            return "ترتیب تارگت‌های میانی اشتباه است", tps, ""
+            
+        # 2. اصلاح TP5 اگر خراب بود
+        if fixed_tps[4] >= fixed_tps[3]:
+            d2 = fixed_tps[0] - fixed_tps[1]
+            d3 = fixed_tps[1] - fixed_tps[2]
+            d4 = fixed_tps[2] - fixed_tps[3]
+            avg_d = (d2 + d3 + d4) / 3.0
+            if avg_d <= 0: return "فاصله تارگت‌ها نامعتبر است", tps, ""
+            new_tp5 = fixed_tps[3] - avg_d
+            fix_msg = f"🔧 تارگت ۵ اشتباه بود، اصلاح شد به {new_tp5:.4f}"
+            fixed_tps[4] = new_tp5
+    else:
+        return "side", tps, ""
+        
+    if abs(e - s) / e > 0.6 / leverage: return "sl_too_far", tps, ""
+    return None, fixed_tps, fix_msg
 
 def get_dynamic_tp_percent(num_positions):
     if num_positions == 1: return PORTFOLIO_TP_PERCENT_1
@@ -236,8 +272,14 @@ def handle_auto(state, parts):
     try: e = float(parts[3]); s = float(parts[4]); tps = [float(x) for x in parts[5:10]]
     except ValueError: notify("❌ اعداد معتبر نیستند."); return
         
-    err = valid_signal(sd, e, s, tps, AUTO_LEVERAGE)
-    if err: notify(f"❌ /auto {symbol}_{sd} رد شد ({err})."); return
+    # 👇 اینجا از تابع اصلاح‌کننده استفاده می‌کنیم
+    err, fixed_tps, fix_msg = valid_signal(sd, e, s, tps, AUTO_LEVERAGE)
+    if err: 
+        notify(f"❌ /auto {symbol}_{sd} رد شد ({err})."); 
+        return
+    if fix_msg:
+        notify(f"⚠️ {symbol}_{sd}: {fix_msg}")
+        tps = fixed_tps # تارگت‌های اصلاح شده رو جایگزین می‌کنیم
 
     st, resp = tt_request("GET", "/futures/positions")
     if st != 200 or not isinstance(resp, dict): notify("⚠️ لیست پوزیشن‌ها خوانده نشد."); return
@@ -335,7 +377,7 @@ def next_auto_stage(t, is_long, entry, price):
     if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05, "TP2 (قفل ۵٪)"
     elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5, "نصفه راه TP3"
     elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"], "TP3 (قفل TP1)"
-    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp3"], "TP4 (قفل TP3)" # 👈 تغییر اینجا اعمال شد
+    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp3"], "TP4 (قفل TP3)" 
     elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"], "TP5 (کلوز)"
     return t["current_stage"], 0, ""
 
@@ -359,7 +401,7 @@ AUTO_STAGE_TEXT = {
     1: ("✅ TP2 زده شد", "نصفه راه TP3"),
     2: ("✅ نصفه راه TP3", "TP3"),
     3: ("✅ TP3 زده شد", "TP4"),
-    4: ("✅ TP4 زده شد (قفل TP3)", "TP5 (کلوز)") # 👈 متن داشبورد هم آپدیت شد
+    4: ("✅ TP4 زده شد (قفل TP3)", "TP5 (کلوز)") 
 }
 
 def get_close_status(stage, why, is_auto=False):
