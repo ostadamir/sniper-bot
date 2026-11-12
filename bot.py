@@ -6,7 +6,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
-# 🛑 DRY_RUN: برای تست روی 1 باشه، برای پول واقعی 0
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
@@ -290,6 +289,7 @@ def process_queue(state):
 def check_telegram(state):
     try:
         r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": state.get("offset", 0), "timeout": 5}, timeout=10).json()
+        print(f"📩 TG Updates Received: {len(r.get('result', []))}", flush=True)
         if not r.get("ok"): return
         for u in r.get("result", []):
             state["offset"] = u["update_id"] + 1
@@ -346,6 +346,8 @@ def manage_positions(state):
         return
     
     items = response.get("items", [])
+    print(f"📊 TT Positions Fetched: {len(items)}", flush=True)
+    
     open_positions = [p for p in items if p.get("status") == "OPENED"]
     closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     open_keys = set()
