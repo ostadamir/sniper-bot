@@ -1,71 +1,98 @@
-import os, re
+import os, re, json, requests
 from datetime import datetime, timezone
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
-import requests
 
-# ===== تنظیمات =====
 TG_SESSION = os.environ.get("TG_SESSION")
 MAIN_BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MAIN_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 API_ID = 17349
 API_HASH = '344583e45741c457fe1862106095a5eb'
-CHANNEL_ID = -1004400244481 # آیدی چنل آدم
+CHANNEL_ID = -1004400244481
+
+PROCESSED_FILE = "processed_signals.json"
+QUEUE_FILE = "pending_signals.txt"
+
+def load_processed():
+    if os.path.exists(PROCESSED_FILE):
+        try:
+            with open(PROCESSED_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_processed(signals):
+    signals = signals[-30:] # فقط ۳۰ سیگنال آخر برای جلوگیری از پر شدن حافظه
+    with open(PROCESSED_FILE, "w") as f:
+        json.dump(signals, f)
 
 def send_to_main_bot(command):
     url = f"https://api.telegram.org/bot{MAIN_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": MAIN_CHAT_ID, "text": command}
+    payload = {"chat_id": MAIN_CHAT_ID, "text": f"📡 سیگنال جدید:\n<code>{command}</code>", "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload, timeout=10)
-        print(f"✅ Sent to bot: {command}")
     except Exception as e:
-        print(f"❌ Error sending to bot: {e}")
+        print(f"❌ Error sending TG alert: {e}")
+    
+    try:
+        with open(QUEUE_FILE, "a") as f:
+            f.write(command + "\n")
+        print(f"✅ Written to queue: {command}")
+    except Exception as e:
+        print(f"❌ Error writing to queue: {e}")
 
 def run_listener():
-    if not TG_SESSION:
-        print("❌ No TG_SESSION found in secrets!")
-        return
-
-    print("⏳ Connecting to Telegram...")
+    if not TG_SESSION: return
     with TelegramClient(StringSession(TG_SESSION), API_ID, API_HASH) as client:
-        print("✅ Connected.")
         now_utc = datetime.now(timezone.utc)
-
-        # گرفتن ۵ پیام آخر چنل برای بررسی
         messages = client.get_messages(CHANNEL_ID, limit=5)
         
+        processed = load_processed()
+        new_processed = False
+
         for msg in messages:
             if not msg.text: continue
-            
-            # 🛑 فیلتر ۷ دقیقه (اگر بیشتر از ۴۲۰ ثانیه گذشته باشه رد میکنه)
-            msg_age = (now_utc - msg.date).total_seconds()
-            if msg_age > 420:
-                continue
+            # فیلتر زمانی ۷ دقیقه
+            if (now_utc - msg.date).total_seconds() > 420: continue 
 
             text = msg.text
+            text_upper = text.upper()
 
-            # 🛑 فیلتر آپدیت‌ها و منقضی شده‌ها
-            if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text:
+            # فیلتر کلمات مزاحم و سفارشات لیمیت
+            if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text or "LIMIT" in text_upper:
                 continue
 
-            # 🛑 فقط سیگنال‌های اصلی رو قبول کن
-            if "#Signal" in text and "Enter" in text and "Stop Loss" in text:
+            if "#SIGNAL" in text_upper and "ENTER" in text_upper and "STOP LOSS" in text_upper:
                 try:
-                    symbol = re.search(r'([A-Z]+/USDT)', text).group(1).replace('/', '')
-                    side = "LONG" if "BUY" in text else "SHORT"
+                    symbol_match = re.search(r'([A-Z0-9]+/USDT)', text) or re.search(r'([A-Z0-9]+)USDT', text)
+                    if not symbol_match: continue
+                    symbol = symbol_match.group(1).replace('/', '').replace('USDT', '')
                     
-                    entry = re.search(r'Enter\s*:\s*([0-9.]+)', text).group(1)
-                    sl = re.search(r'Stop Loss\s*:\s*([0-9.]+)', text).group(1)
+                    m = re.search(r"\b(BUY|LONG|SELL|SHORT)\b", text_upper)
+                    if not m: continue
+                    side = "LONG" if m.group(1) in ("BUY", "LONG") else "SHORT"
                     
-                    tps = re.findall(r'TP[1-5]\s*:\s*([0-9.]+)', text)
+                    entry = re.search(r'Enter\s*:\s*([0-9.]+)', text, re.IGNORECASE).group(1)
+                    sl = re.search(r'Stop Loss\s*:\s*([0-9.]+)', text, re.IGNORECASE).group(1)
+                    
+                    # استخراج ۵ تارگت
+                    tps = re.findall(r'TP[1-5]\s*:\s*([0-9.]+)', text, re.IGNORECASE)
 
-                    if len(tps) >= 4:
-                        # ساخت کامند مخصوص ربات اصلی
-                        cmd = f"/auto {symbol} {side} {entry} {sl} {' '.join(tps)}"
-                        send_to_main_bot(cmd)
+                    if len(tps) >= 5:
+                        cmd = f"/auto {symbol} {side} {entry} {sl} {' '.join(tps[:5])}"
+                        fingerprint = f"{symbol}_{side}_{entry}_{sl}"
+                        
+                        if fingerprint not in processed:
+                            send_to_main_bot(cmd)
+                            processed.append(fingerprint)
+                            new_processed = True
                 except Exception as e:
                     print(f"Parse error: {e}")
+                    
+        if new_processed:
+            save_processed(processed)
 
 if __name__ == "__main__":
     run_listener()
