@@ -39,13 +39,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
           TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
+          DRY_RUN: ${{ secrets.DRY_RUN }}
         run: python bot.py
 
       - name: Commit and Push State
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add manager_state.json
+          for f in manager_state.json processed_signals.json; do
+            [ -f "$f" ] && git add "$f"
+          done
           git commit -m "Update state" || echo "No changes to commit"
-          git pull --rebase origin main
+          git pull --rebase --autostash origin main
           git push
