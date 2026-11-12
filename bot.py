@@ -12,7 +12,7 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
 
-# 👇 تنظیمات جدید درصدهای سبد دستی
+# ===== تنظیمات مدیریت سرمایه =====
 PORTFOLIO_TP_PERCENT_1 = 10.0  
 PORTFOLIO_TP_PERCENT_2 = 2.8   
 PORTFOLIO_TP_PERCENT_3 = 3.3   
@@ -20,7 +20,6 @@ PORTFOLIO_TP_PERCENT_4 = 4.6
 PORTFOLIO_TP_PERCENT_5 = 5.0   
 PORTFOLIO_TP_PERCENT_DEFAULT = 5.0
 
-# 👇 تنظیمات جدید پوزیشن‌های خودکار
 MAX_AUTO_POSITIONS = 2
 AUTO_MARGIN_PERCENT = 10.0
 AUTO_LEVERAGE = 28
@@ -278,12 +277,10 @@ def handle_auto(state, parts):
     st, resp = tt_request("GET", "/futures/positions")
     if st != 200 or not isinstance(resp, dict): notify("⚠️ لیست پوزیشن‌ها خوانده نشد."); return
     
-    # چک کردن اینکه همین پوزیشن از قبل باز نباشه
     for p in resp.get("items", []):
         if p.get("status") == "OPENED" and p.get("symbol") == f"{symbol}USDT" and p.get("side") == sd:
             notify(f"⚠️ {symbol}_{sd} همین الان باز است."); return
 
-    # 👇 منطق جایگزینی هوشمند (فقط برای پوزیشن‌های خودکار)
     open_auto_positions = []
     for p in resp.get("items", []):
         pid = str(p["id"])
@@ -586,6 +583,12 @@ def manage_positions(state):
         manual_parts.append(f"⚠️ بدون سیگنال: {unmanaged_str}")
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
+
+    # 👇 اضافه کردن ساعت آپدیت به هر دو داشبورد
+    now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3, minutes=30)
+    time_str = now.strftime('%H:%M:%S')
+    manual_parts.append(f"\n🕒 <b>آخرین آپدیت:</b> {time_str}")
+    auto_parts.append(f"\n🕒 <b>آخرین آپدیت:</b> {time_str}")
 
     m_text = "\n".join(manual_parts)
     if state.get("dashboard_id"):
