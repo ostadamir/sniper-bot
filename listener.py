@@ -24,7 +24,7 @@ def load_processed():
     return []
 
 def save_processed(signals):
-    signals = signals[-30:] # فقط ۳۰ سیگنال آخر برای جلوگیری از پر شدن حافظه
+    signals = signals[-30:] # فقط ۳۰ سیگنال آخر
     with open(PROCESSED_FILE, "w") as f:
         json.dump(signals, f)
 
@@ -34,17 +34,21 @@ def send_to_main_bot(command):
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"❌ Error sending TG alert: {e}")
+        print(f"❌ Error sending TG alert: {e}", flush=True)
     
     try:
         with open(QUEUE_FILE, "a") as f:
             f.write(command + "\n")
-        print(f"✅ Written to queue: {command}")
+        print(f"✅ Written to queue: {command}", flush=True)
     except Exception as e:
-        print(f"❌ Error writing to queue: {e}")
+        print(f"❌ Error writing to queue: {e}", flush=True)
 
 def run_listener():
-    if not TG_SESSION: return
+    if not TG_SESSION: 
+        print("No TG_SESSION found", flush=True)
+        return
+        
+    print("⏳ Connecting to Telegram...", flush=True)
     with TelegramClient(StringSession(TG_SESSION), API_ID, API_HASH) as client:
         now_utc = datetime.now(timezone.utc)
         messages = client.get_messages(CHANNEL_ID, limit=5)
@@ -54,13 +58,13 @@ def run_listener():
 
         for msg in messages:
             if not msg.text: continue
-            # فیلتر زمانی ۷ دقیقه
-            if (now_utc - msg.date).total_seconds() > 420: continue 
+            
+            # ⚠️ برای تست، زمان رو ۱ ساعت (3600 ثانیه) کردم. بعداً می‌تونی به 420 برگردونی.
+            if (now_utc - msg.date).total_seconds() > 3600: continue 
 
             text = msg.text
             text_upper = text.upper()
 
-            # فیلتر کلمات مزاحم و سفارشات لیمیت
             if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text or "LIMIT" in text_upper:
                 continue
 
@@ -77,7 +81,6 @@ def run_listener():
                     entry = re.search(r'Enter\s*:\s*([0-9.]+)', text, re.IGNORECASE).group(1)
                     sl = re.search(r'Stop Loss\s*:\s*([0-9.]+)', text, re.IGNORECASE).group(1)
                     
-                    # استخراج ۵ تارگت
                     tps = re.findall(r'TP[1-5]\s*:\s*([0-9.]+)', text, re.IGNORECASE)
 
                     if len(tps) >= 5:
@@ -85,14 +88,16 @@ def run_listener():
                         fingerprint = f"{symbol}_{side}_{entry}_{sl}"
                         
                         if fingerprint not in processed:
+                            print(f"🎯 Found new signal: {fingerprint}", flush=True)
                             send_to_main_bot(cmd)
                             processed.append(fingerprint)
                             new_processed = True
                 except Exception as e:
-                    print(f"Parse error: {e}")
+                    print(f"Parse error: {e}", flush=True)
                     
         if new_processed:
             save_processed(processed)
+            print("✅ Saved processed signals.", flush=True)
 
 if __name__ == "__main__":
     run_listener()
