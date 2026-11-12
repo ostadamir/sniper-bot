@@ -12,16 +12,18 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
 
+# 👇 تنظیمات جدید درصدهای سبد دستی
 PORTFOLIO_TP_PERCENT_1 = 10.0  
-PORTFOLIO_TP_PERCENT_2 = 4.0   
-PORTFOLIO_TP_PERCENT_3 = 2.8   
-PORTFOLIO_TP_PERCENT_4 = 4.0   
-PORTFOLIO_TP_PERCENT_5 = 4.0   
-PORTFOLIO_TP_PERCENT_DEFAULT = 3.9
+PORTFOLIO_TP_PERCENT_2 = 2.8   
+PORTFOLIO_TP_PERCENT_3 = 3.3   
+PORTFOLIO_TP_PERCENT_4 = 4.6   
+PORTFOLIO_TP_PERCENT_5 = 5.0   
+PORTFOLIO_TP_PERCENT_DEFAULT = 5.0
 
-MAX_AUTO_POSITIONS = 3
-AUTO_MARGIN_PERCENT = 7.0
-AUTO_LEVERAGE = 28 # 👈 لوریج روی ۲۸ تنظیم شد
+# 👇 تنظیمات جدید پوزیشن‌های خودکار
+MAX_AUTO_POSITIONS = 2
+AUTO_MARGIN_PERCENT = 10.0
+AUTO_LEVERAGE = 28
 MAX_ENTRY_DEV = 0.01
 MIN_TP_DIST = 0.003      
 MIN_SL_DIST = 0.001      
@@ -146,19 +148,16 @@ def check_against_market(side, price, e, sl, tps, leverage):
     if abs(price - sl) / price > 0.6 / leverage: return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
     return None
 
-# 👇 این تابع حالا اشتباهات تایپی را خودش اصلاح می‌کند
 def valid_signal(side, e, s, tps, leverage):
     side = side.upper()
     fixed_tps = list(tps)
     fix_msg = ""
     
-    # 1. چک کردن پایه‌ها (اگر خراب باشن، کلاً رد میشه)
     if side == "LONG":
         if s >= e or fixed_tps[0] <= e: return "استاپ یا تارگت اول اشتباه است", tps, ""
         if not (fixed_tps[0] < fixed_tps[1] < fixed_tps[2] < fixed_tps[3]):
             return "ترتیب تارگت‌های میانی اشتباه است", tps, ""
         
-        # 2. اصلاح TP5 اگر خراب بود
         if fixed_tps[4] <= fixed_tps[3]:
             d2 = fixed_tps[1] - fixed_tps[0]
             d3 = fixed_tps[2] - fixed_tps[1]
@@ -174,7 +173,6 @@ def valid_signal(side, e, s, tps, leverage):
         if not (fixed_tps[0] > fixed_tps[1] > fixed_tps[2] > fixed_tps[3]):
             return "ترتیب تارگت‌های میانی اشتباه است", tps, ""
             
-        # 2. اصلاح TP5 اگر خراب بود
         if fixed_tps[4] >= fixed_tps[3]:
             d2 = fixed_tps[0] - fixed_tps[1]
             d3 = fixed_tps[1] - fixed_tps[2]
@@ -264,29 +262,51 @@ def handle_new(state, parts):
 def handle_auto(state, parts):
     if len(parts) < 10:
         notify("❌ فرمت: /auto SYMBOL SIDE ENTRY SL TP1 TP2 TP3 TP4 TP5"); return
-        
-    if sum(1 for t in state["targets"].values() if t.get("is_auto")) >= MAX_AUTO_POSITIONS:
-        notify(f"⚠️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر است."); return
 
     symbol = parts[1].upper().replace("USDT", ""); sd = parts[2].upper()
     try: e = float(parts[3]); s = float(parts[4]); tps = [float(x) for x in parts[5:10]]
     except ValueError: notify("❌ اعداد معتبر نیستند."); return
         
-    # 👇 اینجا از تابع اصلاح‌کننده استفاده می‌کنیم
     err, fixed_tps, fix_msg = valid_signal(sd, e, s, tps, AUTO_LEVERAGE)
     if err: 
         notify(f"❌ /auto {symbol}_{sd} رد شد ({err})."); 
         return
     if fix_msg:
         notify(f"⚠️ {symbol}_{sd}: {fix_msg}")
-        tps = fixed_tps # تارگت‌های اصلاح شده رو جایگزین می‌کنیم
+        tps = fixed_tps
 
     st, resp = tt_request("GET", "/futures/positions")
     if st != 200 or not isinstance(resp, dict): notify("⚠️ لیست پوزیشن‌ها خوانده نشد."); return
     
+    # چک کردن اینکه همین پوزیشن از قبل باز نباشه
     for p in resp.get("items", []):
         if p.get("status") == "OPENED" and p.get("symbol") == f"{symbol}USDT" and p.get("side") == sd:
             notify(f"⚠️ {symbol}_{sd} همین الان باز است."); return
+
+    # 👇 منطق جایگزینی هوشمند (فقط برای پوزیشن‌های خودکار)
+    open_auto_positions = []
+    for p in resp.get("items", []):
+        pid = str(p["id"])
+        if p.get("status") == "OPENED" and pid in state["targets"] and state["targets"][pid].get("is_auto"):
+            open_auto_positions.append(p)
+
+    if len(open_auto_positions) >= MAX_AUTO_POSITIONS:
+        open_auto_positions.sort(key=lambda x: str(x.get("createdAt", "")))
+        oldest = open_auto_positions[0]
+        oldest_id = str(oldest["id"])
+        oldest_t = state["targets"][oldest_id]
+
+        is_long_old = oldest["side"] == "LONG"
+        price_old = float(oldest.get("markPrice") or 0)
+        tp1_old = oldest_t["tp1"]
+
+        if (is_long_old and price_old >= tp1_old) or (not is_long_old and price_old <= tp1_old):
+            close_position_market(oldest_id)
+            del state["targets"][oldest_id]
+            notify(f"♻️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر بود.\nپوزیشن قدیمی {oldest.get('symbol')} (به TP1 رسیده) بسته شد تا جای سیگنال جدید باز شود.")
+        else:
+            notify(f"⚠️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر است و قدیمی‌ترین پوزیشن ({oldest.get('symbol')}) هنوز به TP1 نرسیده.\nسیگنال جدید رد شد.")
+            return
 
     price = get_market_price(symbol)
     if price is None: notify(f"⚠️ قیمت بازار {symbol} گرفته نشد."); return
