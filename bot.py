@@ -6,7 +6,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
-# 🛑 DRY_RUN: برای پول واقعی باید در سکرت‌های گیت‌هاب روی 0 تنظیم شود
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
@@ -39,21 +38,27 @@ def send_telegram(text):
     try:
         res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
         if res.status_code == 200: return res.json().get("result", {}).get("message_id")
-        print(f"TG HTML Error: {res.status_code} | {res.text}", flush=True)
         if res.status_code == 400: 
             r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": strip_tags(text)[:4000]}, timeout=10)
             if r2.status_code == 200: return r2.json().get("result", {}).get("message_id")
-            print(f"TG Plain Error: {r2.status_code} | {r2.text}", flush=True)
     except Exception as e:
         print("TG Error:", repr(e), flush=True)
     return None
 
-def delete_telegram(message_id):
-    if not message_id: return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteMessage"
+# 👇 تابع ویرایش فیکس شد (اگر پیام پاک شده باشه، False برمی‌گردونه)
+def edit_telegram(message_id, text):
+    if not message_id: return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
     try:
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id}, timeout=5)
-    except: pass
+        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
+        if res.status_code == 200: return True
+        if res.status_code == 400:
+            if "message is not modified" in res.text: return True # آپدیت یکسان بوده، مشکلی نیست
+            if "message to edit not found" in res.text: return False # پیام پاک شده، باید پیام جدید بفرستیم
+            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=10)
+            return r2.status_code == 200
+        return True
+    except: return False
 
 def notify(msg):
     print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "), flush=True)
@@ -404,7 +409,6 @@ def manage_positions(state):
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
                     if patch_tpsl(pos_id, payload_sl, t["tp5"]): cur_sl = payload_sl; t["current_stage"] = stage
             
-            # --- Dashboard UI (Auto) ---
             stage_txt = AUTO_STAGE_TEXT.get(t["current_stage"], "")
             target = t["tp5"]
             if t["current_stage"] == 0: target = t["tp2"]
@@ -424,7 +428,6 @@ def manage_positions(state):
             if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
             continue
 
-        # --- Manual ---
         manual_pnl += pnl; manual_margin += margin
         price_10 = entry + ((margin * 0.10) / size if is_long else -(margin * 0.10) / size)
         
@@ -439,7 +442,6 @@ def manage_positions(state):
             if patch_tpsl(pos_id, final_sl, new_tp): 
                 cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
 
-        # --- Dashboard UI (Manual) ---
         stage_txt = STAGE_TEXT.get(t["current_stage"], "")
         target = t["tp4"]
         if t["current_stage"] < 5: target = t["tp1"]
@@ -487,12 +489,20 @@ def manage_positions(state):
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
-    # ارسال پیام‌های جدید با طراحی جدید
-    if state.get("dashboard_id"): delete_telegram(state["dashboard_id"])
-    state["dashboard_id"] = send_telegram("\n".join(manual_parts))
+    # 👇 اینجا دقیقاً منطق ویرایش (Edit) رو برگردوندم
+    m_text = "\n".join(manual_parts)
+    if state.get("dashboard_id"):
+        if not edit_telegram(state["dashboard_id"], m_text):
+            state["dashboard_id"] = send_telegram(m_text)
+    else:
+        state["dashboard_id"] = send_telegram(m_text)
 
-    if state.get("auto_dashboard_id"): delete_telegram(state["auto_dashboard_id"])
-    state["auto_dashboard_id"] = send_telegram("\n".join(auto_parts))
+    a_text = "\n".join(auto_parts)
+    if state.get("auto_dashboard_id"):
+        if not edit_telegram(state["auto_dashboard_id"], a_text):
+            state["auto_dashboard_id"] = send_telegram(a_text)
+    else:
+        state["auto_dashboard_id"] = send_telegram(a_text)
 
 def run():
     print("Checking...", flush=True)
