@@ -372,6 +372,7 @@ def manage_positions(state):
         is_auto = t.get("is_auto", False)
         price = float(pos.get("markPrice") or 0)
         cur_sl = float(pos.get("stopLoss") or 0)
+        cur_tp = float(pos.get("takeProfit") or 0) # 👈 این خط برگشت
         pnl = float(pos.get("unrealizedPnL") or 0)
         margin = float(pos.get("initialMargin") or 0)
         size = float(pos.get("size") or 0)
@@ -407,7 +408,9 @@ def manage_positions(state):
             restore = sl0 if t["current_stage"] == 0 else (price_10 if t["current_stage"] >= 2 else entry)
             if patch_tpsl(pos_id, restore, t["tp4"]): cur_sl = restore
 
-        stage, new_sl, new_tp = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, t.get("limit_stage", 99))
+        # 👈 فراخوانی تابع با تمام ۹ ورودی درست
+        stage, new_sl, new_tp = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
+        
         if new_sl != cur_sl or new_tp != t.get("cur_tp", 0):
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
             if patch_tpsl(pos_id, final_sl, new_tp): 
@@ -443,7 +446,6 @@ def manage_positions(state):
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
 
-    # 🛑 تغییر نهایی: پاک کردن داشبورد قبلی و ارسال پیام جدید برای دیدن نوتیفیکیشن
     if state.get("dashboard_id"): delete_telegram(state["dashboard_id"])
     state["dashboard_id"] = send_telegram("\n".join(manual_parts))
 
