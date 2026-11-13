@@ -14,10 +14,26 @@
             "is_auto": false,
             "limit_stage": 99,
             "fail_count": 0
+        },
+        "2653077808": {
+            "symbol": "SOL",
+            "side": "LONG",
+            "entry": 80.00648331365699,
+            "sl": 79.4,
+            "tp1": 81.6,
+            "tp2": 82.6,
+            "tp3": 83.6,
+            "tp4": 84.6,
+            "tp5": 85.6,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": true,
+            "limit_stage": 99,
+            "fail_count": 0
         }
     },
     "pending": {},
-    "offset": 209535521,
+    "offset": 209535522,
     "dashboard_id": 772,
     "auto_dashboard_id": 773
 }
