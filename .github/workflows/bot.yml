@@ -50,5 +50,10 @@ jobs:
             [ -f "$f" ] && git add "$f"
           done
           git commit -m "Update state" || echo "No changes to commit"
-          git pull --rebase --autostash origin main
-          git push
+          
+          # 👇 حلقه تلاش مجدد برای جلوگیری از تداخل
+          for i in {1..3}; do
+            git pull --rebase --autostash origin main && git push && break
+            echo "Push failed, retrying in 2 seconds..."
+            sleep 2
+          done
