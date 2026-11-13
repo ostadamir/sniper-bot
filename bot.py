@@ -395,21 +395,17 @@ def next_auto_stage(t, is_long, entry, price):
     g = 1 if is_long else -1; d1 = abs(t["tp1"] - entry)
     def hit(lvl): return price >= lvl if is_long else price <= lvl
     
-    # 👇 منطق جدید شما: 
     if t["current_stage"] == 0 and hit(t["tp2"]): 
-        # استاپ جدید: ۲۰٪ مونده به نقطه ورود (بر اساس فاصله استاپ اولیه)
         risk = abs(entry - t["sl"])
         new_sl = entry - (g * risk * 0.2)
         return 1, new_sl, "TP2 (قفل ۸۰٪ مسیر ریسک)"
         
     elif t["current_stage"] == 1 and hit(t["tp3"]): 
-        # استاپ جدید: ۲۰٪ مونده به TP1
         dist = abs(t["tp1"] - entry)
         new_sl = t["tp1"] - (g * dist * 0.2)
         return 2, new_sl, "TP3 (قفل ۸۰٪ مسیر TP1)"
         
     elif t["current_stage"] == 2 and hit(t["tp4"]): 
-        # 👇 تغییر جدید: استاپ میره روی TP2
         return 3, t["tp2"], "TP4 (قفل TP2)"
         
     elif t["current_stage"] == 3 and hit(t["tp5"]): 
@@ -511,7 +507,6 @@ def manage_positions(state):
                     close_position_market(pos_id)
                 elif reason:
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-                    # 👇 فیکس باگ: اگه استاپ جدید با استاپ فعلی یکی بود، درخواست الکی نده
                     if abs(cur_sl - payload_sl) < 1e-6:
                         t["current_stage"] = stage
                     else:
@@ -547,7 +542,6 @@ def manage_positions(state):
         stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
         if reason:
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-            # 👇 فیکس باگ برای دستی‌ها
             if abs(final_sl - cur_sl) < 1e-6 and abs(new_tp - cur_tp) < 1e-6:
                 t["current_stage"] = stage
             else:
