@@ -17,8 +17,8 @@ QUEUE_FILE = "pending_signals.txt"
 PORTFOLIO_TP_PERCENT_1 = 10.0  
 PORTFOLIO_TP_PERCENT_2 = 2.8   
 PORTFOLIO_TP_PERCENT_3 = 3.3   
-PORTFOLIO_TP_PERCENT_4 = 4.6   
-PORTFOLIO_TP_PERCENT_5 = 5.0   
+PORTFOLIO_TP_PERCENT_4 = 3.6   
+PORTFOLIO_TP_PERCENT_5 = 4.0   
 PORTFOLIO_TP_PERCENT_DEFAULT = 5.0
 
 MAX_AUTO_POSITIONS = 2
@@ -290,22 +290,20 @@ def handle_auto(state, parts):
         if p.get("status") == "OPENED" and pid in state["targets"] and state["targets"][pid].get("is_auto"):
             open_auto_positions.append(p)
 
+    # 👇 منطق جدید جایگزینی: اگر سود ۰.۰۱ دلار یا بیشتر بود، ببند
     if len(open_auto_positions) >= MAX_AUTO_POSITIONS:
         open_auto_positions.sort(key=lambda x: str(x.get("createdAt", "")))
         oldest = open_auto_positions[0]
         oldest_id = str(oldest["id"])
-        oldest_t = state["targets"][oldest_id]
-
-        is_long_old = oldest["side"] == "LONG"
-        price_old = float(oldest.get("markPrice") or 0)
-        tp1_old = oldest_t["tp1"]
-
-        if (is_long_old and price_old >= tp1_old) or (not is_long_old and price_old <= tp1_old):
+        
+        pnl_old = float(oldest.get("unrealizedPnL") or 0)
+        
+        if pnl_old >= 0.01:
             close_position_market(oldest_id)
-            del state["targets"][oldest_id]
-            notify(f"♻️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر بود.\nپوزیشن قدیمی {oldest.get('symbol')} (به TP1 رسیده) بسته شد تا جای سیگنال جدید باز شود.")
+            if oldest_id in state["targets"]: del state["targets"][oldest_id]
+            notify(f"♻️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر بود.\nپوزیشن قدیمی {oldest.get('symbol')} با سود {pnl_old:+.2f}$ نقد شد تا جای سیگنال جدید باز شود.")
         else:
-            notify(f"⚠️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر است و قدیمی‌ترین پوزیشن ({oldest.get('symbol')}) هنوز به TP1 نرسیده.\nسیگنال جدید رد شد.")
+            notify(f"⚠️ سقف {MAX_AUTO_POSITIONS} پوزیشن خودکار پر است و قدیمی‌ترین پوزیشن ({oldest.get('symbol')}) در سود نیست (PnL: {pnl_old:+.2f}$).\nسیگنال جدید رد شد.")
             return
 
     price = get_market_price(symbol)
