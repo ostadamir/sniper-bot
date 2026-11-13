@@ -13,12 +13,12 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
 
-# 👇 تنظیمات به‌روز شده طبق خواسته شما
+# ===== تنظیمات مدیریت سرمایه =====
 PORTFOLIO_TP_PERCENT_1 = 10.0  
 PORTFOLIO_TP_PERCENT_2 = 2.8   
 PORTFOLIO_TP_PERCENT_3 = 3.3   
-PORTFOLIO_TP_PERCENT_4 = 3.6   
-PORTFOLIO_TP_PERCENT_5 = 4.0   
+PORTFOLIO_TP_PERCENT_4 = 4.6   
+PORTFOLIO_TP_PERCENT_5 = 5.0   
 PORTFOLIO_TP_PERCENT_DEFAULT = 5.0
 
 MAX_AUTO_POSITIONS = 2
@@ -46,11 +46,9 @@ def send_telegram(text):
     except Exception as e: print("TG Error:", repr(e), flush=True)
     return None
 
-# 👇 تابع ضد اسپم (تا ۳ بار تلاش می‌کند)
 def edit_telegram(message_id, text):
     if not message_id: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
-    
     for attempt in range(3):
         try:
             res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=15)
@@ -58,13 +56,11 @@ def edit_telegram(message_id, text):
             if res.status_code == 400:
                 if "message is not modified" in res.text: return True
                 if "message to edit not found" in res.text: return False
-                # اگر مشکل از HTML بود، بدون HTML تست کن
                 r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=15)
                 if r2.status_code == 200: return True
             time.sleep(2)
         except Exception:
             time.sleep(2)
-            
     return False 
 
 def notify(msg):
@@ -155,7 +151,6 @@ def check_against_market(side, price, e, sl, tps, leverage):
     if abs(price - sl) / price > 0.6 / leverage: return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
     return None
 
-# 👇 سیستم اصلاح خودکار چندبعدی تارگت‌ها
 def valid_signal(side, e, s, tps, leverage):
     side = side.upper()
     if side == "LONG":
@@ -399,11 +394,27 @@ def next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, max_stag
 def next_auto_stage(t, is_long, entry, price):
     g = 1 if is_long else -1; d1 = abs(t["tp1"] - entry)
     def hit(lvl): return price >= lvl if is_long else price <= lvl
-    if t["current_stage"] == 0 and hit(t["tp2"]): return 1, entry + g * d1 * 0.05, "TP2 (قفل ۵٪)"
-    elif t["current_stage"] == 1 and hit(entry + g * abs(t["tp3"] - entry) * 0.5): return 2, entry + g * d1 * 0.5, "نصفه راه TP3"
-    elif t["current_stage"] == 2 and hit(t["tp3"]): return 3, t["tp1"], "TP3 (قفل TP1)"
-    elif t["current_stage"] == 3 and hit(t["tp4"]): return 4, t["tp3"], "TP4 (قفل TP3)" 
-    elif t["current_stage"] == 4 and hit(t["tp5"]): return 5, t["tp4"], "TP5 (کلوز)"
+    
+    # 👇 منطق جدید شما: 
+    if t["current_stage"] == 0 and hit(t["tp2"]): 
+        # استاپ جدید: ۲۰٪ مونده به نقطه ورود (بر اساس فاصله استاپ اولیه)
+        risk = abs(entry - t["sl"])
+        new_sl = entry - (g * risk * 0.2)
+        return 1, new_sl, "TP2 (قفل ۸۰٪ مسیر ریسک)"
+        
+    elif t["current_stage"] == 1 and hit(t["tp3"]): 
+        # استاپ جدید: ۲۰٪ مونده به TP1
+        dist = abs(t["tp1"] - entry)
+        new_sl = t["tp1"] - (g * dist * 0.2)
+        return 2, new_sl, "TP3 (قفل ۸۰٪ مسیر TP1)"
+        
+    elif t["current_stage"] == 2 and hit(t["tp4"]): 
+        # 👇 تغییر جدید: استاپ میره روی TP2
+        return 3, t["tp2"], "TP4 (قفل TP2)"
+        
+    elif t["current_stage"] == 3 and hit(t["tp5"]): 
+        return 4, t["tp4"], "TP5 (کلوز)"
+        
     return t["current_stage"], 0, ""
 
 STAGE_TEXT = {
@@ -423,10 +434,10 @@ STAGE_TEXT = {
 
 AUTO_STAGE_TEXT = {
     0: ("منتظر TP2", "TP2"),
-    1: ("✅ TP2 زده شد", "نصفه راه TP3"),
-    2: ("✅ نصفه راه TP3", "TP3"),
-    3: ("✅ TP3 زده شد", "TP4"),
-    4: ("✅ TP4 زده شد (قفل TP3)", "TP5 (کلوز)") 
+    1: ("✅ TP2 زده شد (قفل ۸۰٪ ریسک)", "TP3"),
+    2: ("✅ TP3 زده شد (قفل ۸۰٪ TP1)", "TP4"),
+    3: ("✅ TP4 زده شد (قفل TP2)", "TP5 (کلوز)"),
+    4: ("✅ TP5 (کلوز)", "") 
 }
 
 def get_close_status(stage, why, is_auto=False):
@@ -496,17 +507,23 @@ def manage_positions(state):
         if is_auto:
             stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
             if stage > t["current_stage"]:
-                if stage == 5: close_position_market(pos_id)
+                if stage == 4: 
+                    close_position_market(pos_id)
                 elif reason:
                     payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-                    if patch_tpsl(pos_id, payload_sl, t["tp5"]): cur_sl = payload_sl; t["current_stage"] = stage
+                    # 👇 فیکس باگ: اگه استاپ جدید با استاپ فعلی یکی بود، درخواست الکی نده
+                    if abs(cur_sl - payload_sl) < 1e-6:
+                        t["current_stage"] = stage
+                    else:
+                        if patch_tpsl(pos_id, payload_sl, t["tp5"]): 
+                            cur_sl = payload_sl
+                            t["current_stage"] = stage
             
             stage_txt, path_txt = AUTO_STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
             target = t["tp5"]
             if t["current_stage"] == 0: target = t["tp2"]
-            elif t["current_stage"] == 1: target = entry + (abs(t["tp3"] - entry) * 0.5) * (1 if is_long else -1)
-            elif t["current_stage"] == 2: target = t["tp3"]
-            elif t["current_stage"] == 3: target = t["tp4"]
+            elif t["current_stage"] == 1: target = t["tp3"]
+            elif t["current_stage"] == 2: target = t["tp4"]
             
             bar = get_progress_bar(price, entry, target)
             emoji = "🟢" if roi >= 0 else "🔴"
@@ -530,8 +547,12 @@ def manage_positions(state):
         stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
         if reason:
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-            if patch_tpsl(pos_id, final_sl, new_tp): 
-                cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
+            # 👇 فیکس باگ برای دستی‌ها
+            if abs(final_sl - cur_sl) < 1e-6 and abs(new_tp - cur_tp) < 1e-6:
+                t["current_stage"] = stage
+            else:
+                if patch_tpsl(pos_id, final_sl, new_tp): 
+                    cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
 
         stage_txt, path_txt = STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
         target = t["tp4"]
