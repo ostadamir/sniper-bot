@@ -1,7 +1,23 @@
 {
-    "targets": {},
+    "targets": {
+        "2653423944": {
+            "symbol": "ADA",
+            "side": "LONG",
+            "entry": 0.1719,
+            "sl": 0.1695,
+            "tp1": 0.1727,
+            "tp2": 0.1743,
+            "tp3": 0.1759,
+            "tp4": 0.1777,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": false,
+            "limit_stage": 99,
+            "fail_count": 0
+        }
+    },
     "pending": {},
-    "offset": 209535522,
+    "offset": 209535523,
     "dashboard_id": 772,
     "auto_dashboard_id": 773
 }
