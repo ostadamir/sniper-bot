@@ -1,5 +1,22 @@
 {
-    "targets": {},
+    "targets": {
+        "2653953432": {
+            "symbol": "XRP",
+            "side": "SHORT",
+            "entry": 1.0372999999999999,
+            "sl": 1.0458,
+            "tp1": 1.0353,
+            "tp2": 1.0301,
+            "tp3": 1.0248,
+            "tp4": 1.0196,
+            "tp5": 1.0143,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": true,
+            "limit_stage": 99,
+            "fail_count": 0
+        }
+    },
     "pending": {},
     "offset": 209535523,
     "dashboard_id": 772,
