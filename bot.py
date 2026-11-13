@@ -13,6 +13,7 @@ TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
 
+# 👇 تنظیمات به‌روز شده طبق خواسته شما
 PORTFOLIO_TP_PERCENT_1 = 10.0  
 PORTFOLIO_TP_PERCENT_2 = 2.8   
 PORTFOLIO_TP_PERCENT_3 = 3.3   
@@ -37,27 +38,34 @@ def strip_tags(t):
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=10)
+        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=15)
         if res.status_code == 200: return res.json().get("result", {}).get("message_id")
         if res.status_code == 400: 
-            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": strip_tags(text)[:4000]}, timeout=10)
+            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": strip_tags(text)[:4000]}, timeout=15)
             if r2.status_code == 200: return r2.json().get("result", {}).get("message_id")
     except Exception as e: print("TG Error:", repr(e), flush=True)
     return None
 
+# 👇 تابع ضد اسپم (تا ۳ بار تلاش می‌کند)
 def edit_telegram(message_id, text):
     if not message_id: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
-    try:
-        res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=10)
-        if res.status_code == 200: return True
-        if res.status_code == 400:
-            if "message is not modified" in res.text: return True
-            if "message to edit not found" in res.text: return False
-            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=10)
-            return r2.status_code == 200
-        return True
-    except: return False
+    
+    for attempt in range(3):
+        try:
+            res = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": text, "parse_mode": "HTML"}, timeout=15)
+            if res.status_code == 200: return True
+            if res.status_code == 400:
+                if "message is not modified" in res.text: return True
+                if "message to edit not found" in res.text: return False
+                # اگر مشکل از HTML بود، بدون HTML تست کن
+                r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=15)
+                if r2.status_code == 200: return True
+            time.sleep(2)
+        except Exception:
+            time.sleep(2)
+            
+    return False 
 
 def notify(msg):
     print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "), flush=True)
@@ -147,7 +155,7 @@ def check_against_market(side, price, e, sl, tps, leverage):
     if abs(price - sl) / price > 0.6 / leverage: return "استاپ برای این لوریج خیلی دور است (نزدیک لیکویید)"
     return None
 
-# 👇 الگوریتم هوشمند اصلاح چندبعدی تارگت‌ها
+# 👇 سیستم اصلاح خودکار چندبعدی تارگت‌ها
 def valid_signal(side, e, s, tps, leverage):
     side = side.upper()
     if side == "LONG":
@@ -157,11 +165,9 @@ def valid_signal(side, e, s, tps, leverage):
     else:
         return "side", tps, ""
 
-    # محاسبه فاصله بین نقاط (Entry تا TP1، TP1 تا TP2 و...)
     points = [e] + tps
     diffs = [abs(points[i+1] - points[i]) for i in range(len(points) - 1)]
     
-    # پیدا کردن گام استاندارد (میانه - Median)
     try:
         standard_step = statistics.median(diffs)
     except:
@@ -169,21 +175,17 @@ def valid_signal(side, e, s, tps, leverage):
         
     if standard_step <= 0: return "فاصله تارگت‌ها نامعتبر است", tps, ""
 
-    # بازسازی تارگت‌های درست بر اساس گام استاندارد
     g = 1 if side == "LONG" else -1
     fixed_tps = []
     for i in range(1, 6):
         new_tp = e + (g * standard_step * i)
         fixed_tps.append(round(new_tp, 6))
         
-    # مقایسه تارگت‌های اصلی با تارگت‌های محاسبه‌شده و ساخت پیام
     fix_msg = ""
     for i in range(5):
-        # اگر اختلاف تارگت اصلی با محاسبه‌شده بیشتر از ۳۰ درصد گام بود، یعنی تایپو شده
         if abs(fixed_tps[i] - tps[i]) > (standard_step * 0.3):
             fix_msg += f"🔧 TP{i+1} اصلاح شد از {tps[i]} به {fixed_tps[i]}\n"
 
-    # اعتبارسنجی نهایی روی تارگت‌های اصلاح‌شده
     if side == "LONG" and not (e < fixed_tps[0] < fixed_tps[1] < fixed_tps[2] < fixed_tps[3] < fixed_tps[4]):
         return "ترتیب تارگت‌های اصلاح‌شده اشتباه است", tps, ""
     if side == "SHORT" and not (e > fixed_tps[0] > fixed_tps[1] > fixed_tps[2] > fixed_tps[3] > fixed_tps[4]):
