@@ -7,8 +7,10 @@ TG_SESSION = os.environ.get("TG_SESSION")
 MAIN_BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MAIN_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-API_ID = 17349
-API_HASH = '344583e45741c457fe1862106095a5eb'
+# 👇 API ها از سکرت‌ها خوانده می‌شوند
+API_ID = int(os.environ.get("API_ID", 17349))
+API_HASH = os.environ.get("API_HASH", '344583e45741c457fe1862106095a5eb')
+
 CHANNEL_ID = -1004400244481
 
 PROCESSED_FILE = "processed_signals.json"
@@ -24,7 +26,7 @@ def load_processed():
     return []
 
 def save_processed(signals):
-    signals = signals[-30:] # فقط ۳۰ سیگنال آخر
+    signals = signals[-30:]
     with open(PROCESSED_FILE, "w") as f:
         json.dump(signals, f)
 
@@ -53,24 +55,23 @@ def run_listener():
         with TelegramClient(StringSession(TG_SESSION), API_ID, API_HASH) as client:
             now_utc = datetime.now(timezone.utc)
             
-            # 👇 جلوگیری از کرش در صورت اخراج از چنل
             try:
                 messages = client.get_messages(CHANNEL_ID, limit=5)
             except Exception as e:
                 print(f"⚠️ Cannot read channel: {e}", flush=True)
-                send_alert("⚠️ <b>اخطار مهم:</b>\nدسترسی ربات به چنل سیگنال قطع شده است! (از چنل اخراج شده‌اید یا چنل حذف شده)")
+                send_alert("⚠️ <b>اخطار مهم:</b>\nدسترسی ربات به چنل سیگنال قطع شده است!")
                 return 
 
             processed = load_processed()
             new_processed = False
 
             for msg in messages:
-                if not msg.text: continue
+                # 👇 استفاده از raw_text به جای text برای جلوگیری از مشکل مارک‌داون
+                if not msg.raw_text: continue
                 
-                # فیلتر ۷ دقیقه (420 ثانیه)
                 if (now_utc - msg.date).total_seconds() > 420: continue 
 
-                text = msg.text
+                text = msg.raw_text
                 text_upper = text.upper()
 
                 if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text or "LIMIT" in text_upper:
@@ -108,6 +109,7 @@ def run_listener():
                 print("✅ Saved processed signals.", flush=True)
     except Exception as e:
         print(f"Listener Fatal Error: {e}", flush=True)
+        send_alert(f"🚨 خطای جدی در شنونده: {e}")
 
 if __name__ == "__main__":
     run_listener()
