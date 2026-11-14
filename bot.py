@@ -8,7 +8,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TRUETRADE_KEY = os.environ.get("TRUETRADE_KEY")
 TRUETRADE_SECRET = os.environ.get("TRUETRADE_SECRET")
 
-# 👇 DRY_RUN کلاً حذف شد تا همیشه با پول واقعی کار کند
 TRUETRADE_URL = "https://apiv2.thetruetrade.io"
 STATE_FILE = "manager_state.json"
 QUEUE_FILE = "pending_signals.txt"
@@ -57,13 +56,13 @@ def edit_telegram(message_id, text):
             if res.status_code == 200: return True
             if res.status_code == 400:
                 if "message is not modified" in res.text: return True
-                if "message to edit not found" in res.text: return False # فقط اینجا false بده تا پیام جدید ساخته بشه
+                if "message to edit not found" in res.text: return False
                 r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "text": strip_tags(text)[:4000]}, timeout=15)
                 if r2.status_code == 200: return True
             time.sleep(2)
         except Exception:
             time.sleep(2)
-    return True # 👈 اگر خطای شبکه بود، True برمیگرداند تا هر بار پیام تکراری ساخته نشود
+    return True 
 
 def notify(msg):
     print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "), flush=True)
@@ -92,6 +91,10 @@ def render_check_engine(state):
             text += f"🕒 زمان: {e['time']}\n"
             text += "━━━━━━━━━━━━━━━━━━━━━\n"
     
+    now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3, minutes=30)
+    time_str = now.strftime('%H:%M:%S')
+    text += f"\n🕒 <b>آخرین آپدیت:</b> {time_str}"
+
     if state.get("check_engine_id"):
         if not edit_telegram(state["check_engine_id"], text):
             state["check_engine_id"] = send_telegram(text)
@@ -199,25 +202,6 @@ def get_market_price(state, symbol):
     report_error(state, f"price_{symbol}", "خطا در دریافت قیمت", f"قیمت {symbol} خوانده نشد.", "🟡")
     return None
 
-def get_last_closed_candle(state, symbol):
-    s = symbol.upper()
-    try:
-        url = f"https://www.okx.com/api/v5/market/candles?instId={s}-USDT-SWAP&bar=5m&limit=2"
-        r = requests.get(url, timeout=8)
-        if r.status_code == 200:
-            data = r.json()["data"]
-            if len(data) >= 2: return float(data[1][4])
-    except: pass
-    try:
-        url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={s}USDT&interval=5&limit=2"
-        r = requests.get(url, timeout=8)
-        if r.status_code == 200:
-            data = r.json()["result"]["list"]
-            if len(data) >= 2: return float(data[1][4])
-    except: pass
-    report_error(state, f"candle_{symbol}", "خطای داده کندل", f"کندل 5m برای {symbol} دریافت نشد.", "🟡")
-    return None
-
 def check_against_market(side, price, e, sl, tps, leverage):
     tp_last, tp1 = tps[-1], tps[0]
     if side == "LONG":
@@ -240,13 +224,11 @@ def valid_signal(side, e, s, tps, leverage):
     else:
         return "side", tps, ""
 
-    # 👇 اگر سیگنال سالم است، اصلا دستکاریش نکن
     ordered = (e < tps[0] < tps[1] < tps[2] < tps[3] < tps[4]) if side == "LONG" else (e > tps[0] > tps[1] > tps[2] > tps[3] > tps[4])
     if ordered:
         if abs(e - s) / e > 0.6 / leverage: return "sl_too_far", tps, ""
         return None, tps, ""
 
-    # اگر خراب بود، اصلاح کن
     points = [e] + tps
     diffs = [abs(points[i+1] - points[i]) for i in range(len(points) - 1)]
     try: standard_step = statistics.median(diffs)
@@ -409,11 +391,8 @@ def handle_auto(state, parts):
     else:
         margin_to_use = target_margin
 
-    # تور امنیتی (Safety Net) برای استاپ لاس اولیه (۱.۵ درصد دورتر)
-    g = 1 if sd == "LONG" else -1
-    safety_sl = s - (g * s * 0.015)
-
-    res = open_auto_position(state, symbol, sd, margin_to_use, AUTO_LEVERAGE, safety_sl, tps[4])
+    # 👇 استاپ لاس دقیقاً همون استاپ سیگنال است (بدون تور امنیتی)
+    res = open_auto_position(state, symbol, sd, margin_to_use, AUTO_LEVERAGE, s, tps[4])
     if res is None: return
     
     new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "tp5": tps[4], "current_stage": 0, "closed": False, "is_auto": True, "limit_stage": 99, "fail_count": 0}
@@ -520,7 +499,7 @@ STAGE_TEXT = {
 }
 
 AUTO_STAGE_TEXT = {
-    0: ("منتظر TP2 (قانون کندل)", "TP2"),
+    0: ("منتظر TP2", "TP2"),
     1: ("✅ TP2 زده شد (قفل ۸۰٪ ریسک)", "TP3"),
     2: ("✅ TP3 زده شد (قفل ۸۰٪ TP1)", "TP4"),
     3: ("✅ TP4 زده شد (قفل TP2)", "TP5 (کلوز)"),
@@ -530,7 +509,6 @@ AUTO_STAGE_TEXT = {
 def get_close_status(stage, why, is_auto=False):
     if why == "TAKEPROFIT": return "🎯 تارگت نهایی زده شد"
     if why == "MANUAL": return "🖐️ بسته شده به صورت دستی"
-    if why == "CANDLE_SL": return "🕯️ استاپ کندلی (بسته شدن کندل 5m)"
     
     if why == "STOPLOSS":
         if stage == 0: return "❌ حد ضرر اولیه (Safety Net)"
@@ -586,7 +564,7 @@ def manage_positions(state):
         size = float(pos.get("size") or 0)
         
         if price <= 0 or margin <= 0 or size <= 0: continue
-        if cur_tp <= 0: cur_tp = t.get("tp4", t.get("tp5", 0)) # 👈 فیکس باگ صفر بودن TP
+        if cur_tp <= 0: cur_tp = t.get("tp4", t.get("tp5", 0))
             
         is_long = (side == "LONG")
         entry = float(pos.get("entryPrice") or 0)
@@ -597,24 +575,6 @@ def manage_positions(state):
         tol = max(1e-8, price * 1e-5)
 
         if is_auto:
-            # 👇 بررسی استاپ کندلی در مرحله 0
-            if t["current_stage"] == 0:
-                candle_close = get_last_closed_candle(state, symbol)
-                if candle_close is not None:
-                    hit_sl = (is_long and candle_close <= t["sl"]) or (not is_long and candle_close >= t["sl"])
-                    if hit_sl:
-                        if close_position_market(state, pos_id):
-                            notify(f"🕯️ استاپ کندلی فعال شد!\nپوزیشن {key_base} بسته شد.")
-                            del state["targets"][pos_id]
-                            continue
-                        else:
-                            t["fail_count"] = t.get("fail_count", 0) + 1
-                            if t["fail_count"] > 3:
-                                notify(f"🚨 تلاش برای بستن کندلی {key_base} ناموفق بود!")
-                                t["fail_count"] = 0
-                            continue
-
-            # 👇 حلقه برای اینکه اگر قیمت یهو پرید، همه پله‌ها رو با هم رد کنه
             while True:
                 stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
                 if stage > t["current_stage"]:
@@ -625,7 +585,6 @@ def manage_positions(state):
                         break
                     elif reason:
                         payload_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-                        # فقط اگر استاپ جدید با قبلی فرق داشت به صرافی بفرست
                         if abs(cur_sl - payload_sl) > 1e-6:
                             if patch_tpsl(state, pos_id, payload_sl, t.get("tp5", cur_tp)): 
                                 cur_sl = payload_sl
@@ -636,7 +595,7 @@ def manage_positions(state):
                 else:
                     break
 
-            if t.get("closed"): continue # اگر توی حلقه بسته شد، برو بعدی
+            if t.get("closed"): continue 
 
             stage_txt, path_txt = AUTO_STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
             target = t.get("tp5", cur_tp)
@@ -648,10 +607,7 @@ def manage_positions(state):
             emoji = "🟢" if roi >= 0 else "🔴"
             card = f"{emoji} <b>{key_base}</b> | 🤖 خودکار\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
-            if t["current_stage"] == 0:
-                card += f"🛡️ استاپ کندلی: <code>منتظر بسته شدن کندل 5m</code>\n"
-            else:
-                card += f"🛑 استاپ (سخت‌افزاری): <code>{cur_sl:.4f}</code>\n"
+            card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
             card += f"📌 وضعیت: {stage_txt}\n"
             if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
             card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
@@ -670,7 +626,6 @@ def manage_positions(state):
         stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99))
         if reason:
             final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-            # چک کن اگر پشت قیمت بود، ارسال نکن
             is_behind = (is_long and final_sl >= price) or (not is_long and final_sl <= price)
             if not is_behind:
                 if abs(final_sl - cur_sl) > 1e-6 or abs(new_tp - cur_tp) > 1e-6:
@@ -773,7 +728,7 @@ def run():
         traceback.print_exc()
         notify(f"🚨 خطای اجرای کلی: <code>{html.escape(repr(e))[:300]}</code>")
     finally:
-        save_state(state) # 👈 در هر شرایطی حافظه ذخیره میشود
+        save_state(state)
 
 if __name__ == "__main__":
     run()
