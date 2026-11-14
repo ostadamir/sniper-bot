@@ -66,7 +66,6 @@ def run_listener():
             new_processed = False
 
             for msg in messages:
-                # 👇 استفاده از raw_text به جای text برای جلوگیری از مشکل مارک‌داون
                 if not msg.raw_text: continue
                 
                 if (now_utc - msg.date).total_seconds() > 420: continue 
