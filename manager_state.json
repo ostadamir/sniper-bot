@@ -1,22 +1,5 @@
 {
-    "targets": {
-        "2657450556": {
-            "symbol": "ETH",
-            "side": "SHORT",
-            "entry": 1909.78,
-            "sl": 1916.35,
-            "tp1": 1903.1,
-            "tp2": 1896.51,
-            "tp3": 1889.94,
-            "tp4": 1883.39,
-            "tp5": 1876.86,
-            "current_stage": 0,
-            "closed": false,
-            "is_auto": true,
-            "limit_stage": 99,
-            "fail_count": 0
-        }
-    },
+    "targets": {},
     "pending": {},
     "offset": 209535523,
     "dashboard_id": 772,
