@@ -10,6 +10,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # 👈 جلوگیری از گیر کردن ران
     permissions:
       contents: write
     steps:
@@ -24,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
       - name: Run Listener
         continue-on-error: true
@@ -42,6 +43,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TRUETRADE_KEY: ${{ secrets.TRUETRADE_KEY }}
           TRUETRADE_SECRET: ${{ secrets.TRUETRADE_SECRET }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+          ALLOWED_USER_IDS: ${{ secrets.ALLOWED_USER_IDS }}
         run: python -u bot.py
 
       - name: Commit and Push State
@@ -49,7 +52,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          for f in manager_state.json processed_signals.json; do
+          for f in manager_state.json processed_signals.json pending_signals.txt; do
             [ -f "$f" ] && git add "$f"
           done
           git commit -m "Update state" || echo "No changes to commit"
