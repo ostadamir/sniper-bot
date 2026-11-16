@@ -7,16 +7,18 @@ TG_SESSION = os.environ.get("TG_SESSION")
 MAIN_BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MAIN_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# 👇 بدون مقدار پیش‌فرض، فقط از سکرت‌ها می‌خواند
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
 CHANNEL_ID = -1004400244481
-MAX_AGE_SEC = 420   # همان ۷ دقیقه خودمان
+MAX_AGE_SEC = 420
 
 PROCESSED_FILE = "processed_signals.json"
 QUEUE_FILE = "pending_signals.txt"
 NUM = r'([0-9]+(?:\.[0-9]+)?)'
+HASHTAG_REGEX = r'#[A-Z0-9_]+'
+
+CANCEL_KEYWORDS = ["فعال نشد", "لغو", "منقضی", "کنسل", "برداشت اردر", "پاک شد", "تایم تمام"]
 
 def load_processed():
     if os.path.exists(PROCESSED_FILE):
@@ -28,7 +30,7 @@ def load_processed():
     return []
 
 def save_processed(signals):
-    signals = signals[-30:]
+    signals = signals[-50:]
     with open(PROCESSED_FILE, "w") as f:
         json.dump(signals, f)
 
@@ -49,10 +51,15 @@ def send_to_main_bot(command):
 
 def fetch_messages(client):
     try:
-        return client.get_messages(CHANNEL_ID, limit=5)
+        return client.get_messages(CHANNEL_ID, limit=10)
     except ValueError:
-        client.get_dialogs() # کش کردن برای StringSession
-        return client.get_messages(CHANNEL_ID, limit=5)
+        client.get_dialogs()
+        return client.get_messages(CHANNEL_ID, limit=10)
+
+def find_tag(text_upper):
+    """اولین هشتگ غیر از #SIGNAL"""
+    tags = [t for t in re.findall(HASHTAG_REGEX, text_upper) if t != "#SIGNAL"]
+    return tags[0] if tags else None
 
 def run_listener():
     if not TG_SESSION: return
@@ -76,17 +83,29 @@ def run_listener():
 
             new_processed = False
 
-            for msg in messages:
+            # 👇 FIX 5: معکوس کردن ترتیب پیام‌ها (قدیمی‌ترین اول)
+            for msg in reversed(messages):
                 if not msg.raw_text: continue
                 if (now_utc - msg.date).total_seconds() > MAX_AGE_SEC: continue
 
                 text = msg.raw_text
                 text_upper = text.upper()
+                current_tag = find_tag(text_upper)
+                is_signal = "ENTER" in text_upper and "STOP LOSS" in text_upper
 
-                if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text or "LIMIT" in text_upper:
+                # 👇 FIX 2 & MEDIUM: بررسی پیام کنسل (فقط اگر سیگنال نباشد)
+                if current_tag and not is_signal and any(k in text for k in CANCEL_KEYWORDS):
+                    if f"cancel_{current_tag}" not in processed:
+                        print(f"🚫 Detected cancel for {current_tag}", flush=True)
+                        send_to_main_bot(f"/cancel_limit {current_tag}")
+                        processed.append(f"cancel_{current_tag}")
+                        new_processed = True
                     continue
 
-                if "#SIGNAL" in text_upper and "ENTER" in text_upper and "STOP LOSS" in text_upper:
+                if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text:
+                    continue
+
+                if "#SIGNAL" in text_upper and is_signal:
                     try:
                         symbol_match = re.search(r'([A-Z0-9]+/USDT)', text) or re.search(r'([A-Z0-9]+)USDT', text)
                         if not symbol_match: continue
@@ -96,27 +115,37 @@ def run_listener():
                         if not m: continue
                         side = "LONG" if m.group(1) in ("BUY", "LONG") else "SHORT"
 
-                        e_m = re.search(r'Enter\s*:\s*' + NUM, text, re.IGNORECASE)
+                        e_m = re.search(r'Enter(?:\s*Limit)?\s*:\s*' + NUM, text, re.IGNORECASE)
                         s_m = re.search(r'Stop Loss\s*:\s*' + NUM, text, re.IGNORECASE)
                         if not e_m or not s_m: continue
                         entry, sl = e_m.group(1), s_m.group(1)
 
-                        # 👇 چک کردن جهت استاپ با سمت معامله
                         if (side == "LONG" and float(sl) >= float(entry)) or (side == "SHORT" and float(sl) <= float(entry)):
-                            print(f"⚠️ Side/SL mismatch, skipped: {symbol} {side}", flush=True)
                             continue
 
                         tps = re.findall(r'TP[1-5]\s*:\s*' + NUM, text, re.IGNORECASE)
+                        
+                        # 👇 FIX 3: نیاز به ۵ تارگت
+                        if len(tps) < 5: continue 
 
-                        if len(tps) >= 5:
-                            cmd = f"/auto {symbol} {side} {entry} {sl} {' '.join(tps[:5])}"
-                            fingerprint = f"{symbol}_{side}_{entry}_{sl}"
+                        fingerprint = f"{symbol}_{side}_{entry}_{sl}"
+                        if fingerprint in processed: continue
 
-                            if fingerprint not in processed:
-                                print(f"🎯 Found new signal: {fingerprint}", flush=True)
-                                send_to_main_bot(cmd)
-                                processed.append(fingerprint)
-                                new_processed = True
+                        is_limit = "LIMIT" in text_upper
+                        # 👇 FIX 4: لیمیت بدون هشتگ رد شود
+                        if is_limit and not current_tag:
+                            send_alert(f"⚠️ سیگنال لیمیت {symbol} هشتگ نداشت و رد شد.")
+                            processed.append(fingerprint); new_processed = True
+                            continue
+
+                        cmd_type = "/auto_limit" if is_limit else "/auto"
+                        tag_suffix = f" {current_tag}" if is_limit else ""
+                        cmd = f"{cmd_type} {symbol} {side} {entry} {sl} {' '.join(tps[:5])}{tag_suffix}"
+
+                        print(f"🎯 Found new signal: {fingerprint}", flush=True)
+                        send_to_main_bot(cmd)
+                        processed.append(fingerprint)
+                        new_processed = True
                     except Exception as e:
                         print(f"Parse error: {e}", flush=True)
 
