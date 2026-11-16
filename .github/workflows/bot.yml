@@ -10,7 +10,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10 # 👈 جلوگیری از گیر کردن ران
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run Listener
         continue-on-error: true
@@ -52,14 +52,25 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          
+          # 👇 لغو کردن هرگونه عملیات ری‌بیس (Rebase) ناتمام از ران‌های قبلی
+          git rebase --abort || true
+          
           for f in manager_state.json processed_signals.json pending_signals.txt; do
             [ -f "$f" ] && git add "$f"
           done
+          
           git commit -m "Update state" || echo "No changes to commit"
           
           ok=0
           for i in 1 2 3; do
-            if git pull --rebase --autostash origin main && git push; then ok=1; break; fi
+            # 👇 حل تداخل: در صورت تداخل، نسخه لوکال (حافظه جدید این ران) رو نگه می‌داریم
+            if git pull --no-rebase -X ours origin main && git push; then 
+              ok=1
+              break
+            fi
+            git merge --abort || true
             sleep 2
           done
+          
           if [ "$ok" != "1" ]; then echo "PUSH FAILED"; exit 1; fi
