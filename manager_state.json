@@ -12,15 +12,15 @@
             "current_stage": 0,
             "closed": false,
             "is_auto": false,
-            "is_isolated": true,
+            "is_isolated": false,
             "limit_stage": 99,
             "fail_count": 0,
-            "created": 1794850611.6767328,
+            "created": 1794850726.4715004,
             "missing": 0
         }
     },
     "pending": {},
-    "offset": 209535525,
+    "offset": 209535527,
     "dashboard_id": 812,
     "auto_dashboard_id": 813,
     "check_engine_id": 814,
