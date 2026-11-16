@@ -1,26 +1,7 @@
 {
-    "targets": {
-        "2667608810": {
-            "symbol": "XRP",
-            "side": "LONG",
-            "entry": 0.9593,
-            "sl": 0.9400160000000001,
-            "tp1": 0.97,
-            "tp2": 0.98,
-            "tp3": 0.99,
-            "tp4": 1.0,
-            "current_stage": 0,
-            "closed": false,
-            "is_auto": false,
-            "is_isolated": false,
-            "limit_stage": 99,
-            "fail_count": 0,
-            "created": 1794850726.4715004,
-            "missing": 0
-        }
-    },
+    "targets": {},
     "pending": {},
-    "offset": 209535527,
+    "offset": 209535528,
     "dashboard_id": 812,
     "auto_dashboard_id": 813,
     "check_engine_id": 814,
