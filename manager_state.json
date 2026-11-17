@@ -7,6 +7,7 @@
     "auto_dashboard_id": 828,
     "check_engine_id": 829,
     "active_errors": {},
-    "day": null,
-    "day_balance": 0.0
+    "day": "2026-11-17",
+    "day_balance": 135.7535418186179,
+    "queue_retries": {}
 }
