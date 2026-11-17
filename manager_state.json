@@ -1,13 +1,1 @@
-{
-    "targets": {},
-    "pending": {},
-    "limit_orders": {},
-    "offset": 0,
-    "dashboard_id": 827,
-    "auto_dashboard_id": 828,
-    "check_engine_id": 829,
-    "active_errors": {},
-    "day": "2026-11-17",
-    "day_balance": 135.7535418186179,
-    "queue_retries": {}
-}
+{}
