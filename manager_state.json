@@ -1,6 +1,27 @@
 {
     "targets": {},
-    "pending": {},
+    "pending": {
+        "ETH_SHORT": [
+            {
+                "symbol": "ETH",
+                "side": "SHORT",
+                "entry": 1792.09,
+                "sl": 1817.18,
+                "tp1": 1772.12,
+                "tp2": 1752.14,
+                "tp3": 1732.16,
+                "tp4": 1712.18,
+                "tp5": 1692.21,
+                "current_stage": 0,
+                "closed": false,
+                "is_auto": true,
+                "is_isolated": false,
+                "limit_stage": 99,
+                "fail_count": 0,
+                "created": 1794942075.2891135
+            }
+        ]
+    },
     "limit_orders": {},
     "queue_retries": {},
     "offset": 0,
