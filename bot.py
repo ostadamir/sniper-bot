@@ -70,7 +70,7 @@ def notify(msg):
     print("NOTIFY:", strip_tags(msg)[:300].replace("\n", " | "), flush=True)
     return send_telegram(msg)
 
-# ================= Check Engine =================
+# ================= Check Engine (Error Logger) =================
 def report_error(state, err_id, title, details, level="🔴"):
     state.setdefault("active_errors", {})[err_id] = {
         "title": title, "details": details, "level": level, 
@@ -164,7 +164,6 @@ def close_position_market(state, pos_id):
     return True
 
 def cancel_limit_order(state, order_id):
-    # 👇 هشدار: آدرس زیر بر اساس حدس استاندارد است. اگر تروتید آدرس دیگری دارد، اینجا را اصلاح کنید.
     st, res = tt_request("DELETE", f"/futures/orders/{order_id}")
     if st in (200, 201, 204):
         return True
@@ -178,11 +177,11 @@ def extract_list(res):
             if isinstance(res.get(k), list): return res[k]
     return []
 
-def extract_id(res):
+def extract_id(res, keys=("id", "positionId", "orderId")):
     if not isinstance(res, dict): return None
     for src in (res, res.get("data"), res.get("item"), res.get("position"), res.get("order")):
         if isinstance(src, dict):
-            for k in ("id", "positionId", "orderId"):
+            for k in keys:
                 if src.get(k) is not None: return str(src[k])
     return None
 
@@ -282,7 +281,7 @@ def open_auto_position(state, symbol, side, margin_usdt, leverage, sl, tp, is_li
         "walletType": "debit", "stopLoss": fmt_num(sl), "takeProfit": fmt_num(tp)
     }
     if is_limit:
-        payload["price"] = fmt_num(entry) # 👈 فیلد قیمت ورود
+        payload["price"] = fmt_num(entry)
 
     st, res = tt_request("POST", "/futures/positions", payload)
     if st not in (200, 201):
@@ -295,7 +294,7 @@ def open_auto_position(state, symbol, side, margin_usdt, leverage, sl, tp, is_li
 
 # ================= State & Handlers =================
 def new_state(): return {
-    "targets": {}, "pending": {}, "limit_orders": {}, "offset": 0, 
+    "targets": {}, "pending": {}, "limit_orders": {}, "queue_retries": {}, "offset": 0, 
     "dashboard_id": None, "auto_dashboard_id": None, "check_engine_id": None, 
     "active_errors": {}, "day": None, "day_balance": 0.0
 }
@@ -350,7 +349,6 @@ def handle_cancel_limit(state, parts):
         notify(f"ℹ️ سفارش لیمیت {tag} در لیست نبود (قبلاً فعال یا کنسل شده)."); return
 
     order_id = order_info.get("order_id")
-    # 👇 FIX 6: فقط در صورت موفقیت پاک شود
     if order_id and cancel_limit_order(state, order_id):
         notify(f"🚫 سفارش لیمیت {tag} ({order_info['symbol']}) طبق پیام چنل کنسل شد.")
         del state["limit_orders"][tag]
@@ -364,11 +362,16 @@ def handle_cancel_limit(state, parts):
 
 def handle_new(state, parts, is_isolated=False):
     limit_stage = 99
+    mode_str = ""
     if parts[-1].upper() in ("RF", "SAFE"):
-        limit_stage = 1 if parts[-1].upper() == "RF" else 2
+        mode = parts[-1].upper()
+        limit_stage = 1 if mode == "RF" else 2
+        mode_str = mode
         parts = parts[:-1]
 
-    if len(parts) == 8:
+    if len(parts) > 9:
+        parts = parts[:9] 
+    elif len(parts) == 8:
         try: parts.append(str(round(float(parts[7]) + (float(parts[7]) - float(parts[6])), 8)))
         except: pass
 
@@ -379,7 +382,6 @@ def handle_new(state, parts, is_isolated=False):
     try: e = float(parts[3]); s = float(parts[4]); tps = [float(x) for x in parts[5:9]]
     except ValueError: notify("❌ اعداد معتبر نیستند."); return
 
-    # 👇 FIX 5 (MEDIUM): بازگرداندن اعتبارسنجی دستی
     if sd not in ("LONG", "SHORT") or e <= 0:
         notify("❌ SIDE باید LONG یا SHORT باشد."); return
     g = 1 if sd == "LONG" else -1
@@ -399,7 +401,7 @@ def handle_new(state, parts, is_isolated=False):
         if ex["entry"] == e and ex["sl"] == s: return
     state["pending"].setdefault(pos_key, []).append(new_sig)
     msg_type = "آزاد 🔒" if is_isolated else "دستی"
-    notify(f"✅ سیگنال {msg_type} {pos_key} ثبت شد." + (f" ({parts[-1]})" if limit_stage < 99 else ""))
+    notify(f"✅ سیگنال {msg_type} {pos_key} ثبت شد." + (f" ({mode_str})" if mode_str else ""))
 
 def handle_auto(state, parts, is_limit=False):
     tag = None
@@ -428,7 +430,6 @@ def handle_auto(state, parts, is_limit=False):
         notify(f"⚠️ قیمت {symbol} گرفته نشد؛ سیگنال رد شد."); return
 
     if is_limit:
-        # 👇 FIX 4 (MEDIUM): چک کردن جهت قیمت لیمیت
         if (sd == "LONG" and e >= price) or (sd == "SHORT" and e <= price):
             notify(f"⛔ لیمیت {symbol}_{sd} رد شد: قیمت ورود در سمت اشتباه بازار است."); return
         if (sd == "LONG" and price <= s) or (sd == "SHORT" and price >= s):
@@ -447,7 +448,6 @@ def handle_auto(state, parts, is_limit=False):
         notify("⚠️ لیست پوزیشن‌ها خوانده نشد؛ سیگنال رد شد."); return
     items = resp.get("items", [])
 
-    # 👇 FIX MEDIUM: بررسی پوزیشن تکراری
     for p in items:
         if p.get("status") == "OPENED" and p.get("symbol") == f"{symbol}USDT" and p.get("side") == sd:
             notify(f"⚠️ {symbol}_{sd} همین الان باز است."); return
@@ -455,7 +455,6 @@ def handle_auto(state, parts, is_limit=False):
     open_auto = [p for p in items if p.get("status") == "OPENED" and state["targets"].get(str(p["id"]), {}).get("is_auto")]
 
     if is_limit:
-        # 👇 FIX MEDIUM: لیمیت‌های در انتظار هم توی سقف حساب میشن
         if len(open_auto) + len(state["limit_orders"]) >= MAX_AUTO_POSITIONS:
             notify(f"⚠️ سقف پوزیشن/لیمیت پر است؛ لیمیت {symbol}_{sd} رد شد."); return
     elif len(open_auto) >= MAX_AUTO_POSITIONS:
@@ -468,7 +467,6 @@ def handle_auto(state, parts, is_limit=False):
             notify(f"♻️ پوزیشن قدیمی {oldest.get('symbol')} با سود {pnl_old:+.2f}$ نقد شد.")
             time.sleep(2)
         else:
-            # 👇 FIX MEDIUM: اگر بستن شکست خورد، سیگنال جدید رد شود
             notify(f"⚠️ سقف پر است و قدیمی‌ترین پوزیشن بسته نشد (PnL: {pnl_old:+.2f}$). سیگنال رد شد.")
             return
 
@@ -488,7 +486,8 @@ def handle_auto(state, parts, is_limit=False):
     if res is None: return
 
     if is_limit:
-        order_id = extract_id(res)
+        # 👇 برای لیمیت، هم orderId و هم id رو چک میکنیم
+        order_id = extract_id(res, keys=("id", "orderId", "positionId"))
         if order_id:
             state["limit_orders"][tag] = {
                 "order_id": order_id, "symbol": symbol, "side": sd, "entry": e,
@@ -499,8 +498,9 @@ def handle_auto(state, parts, is_limit=False):
         else:
             notify(f"⚠️ سفارش لیمیت ثبت شد ولی ID پیدا نشد. مدیریت دستی لازم است.")
     else:
+        # 👇 برای مارکت، فقط positionId یا id رو قبول میکنیم
+        pos_id = extract_id(res, keys=("positionId", "id"))
         new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "tp5": tps[4], "current_stage": 0, "closed": False, "is_auto": True, "is_isolated": False, "limit_stage": 99, "fail_count": 0, "created": time.time()}
-        pos_id = extract_id(res)
         if pos_id:
             state["targets"][pos_id] = new_sig
             notify(f"🤖 پوزیشن خودکار {symbol}_{sd} باز شد.")
@@ -512,6 +512,8 @@ def process_queue(state):
     if not os.path.exists(QUEUE_FILE): return
     with open(QUEUE_FILE, "r") as f: lines = f.readlines()
     remaining = []
+    tries = state.setdefault("queue_retries", {})
+    
     for line in lines:
         line = line.strip()
         if not line.startswith("/"): continue
@@ -520,9 +522,16 @@ def process_queue(state):
             if line.startswith("/auto_limit"): handle_auto(state, parts, is_limit=True)
             elif line.startswith("/auto"): handle_auto(state, parts, is_limit=False)
             elif line.startswith("/cancel_limit"): handle_cancel_limit(state, parts)
+            tries.pop(line, None) # موفق بود، از لیست تلاش‌ها پاک میشه
         except Exception as e:
             notify(f"⚠️ خطا در پردازش سیگنال: {html.escape(repr(e))}")
-            remaining.append(line)
+            tries[line] = tries.get(line, 0) + 1
+            if tries[line] < 3:
+                remaining.append(line)
+            else:
+                tries.pop(line, None)
+                notify(f"🗑️ دستور بعد از ۳ بار تلاش حذف شد:\n<code>{html.escape(line)}</code>")
+                
     with open(QUEUE_FILE, "w") as f:
         f.write("\n".join(remaining) + ("\n" if remaining else ""))
 
@@ -649,7 +658,7 @@ def manage_positions(state):
     closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     open_keys = {str(p["id"]) for p in open_positions}
 
-    # 👇 FIX 7: اول تشخیص پر شدن لیمیت‌ها
+    # ۱. اول: تشخیص پر شدن لیمیت‌ها
     for tag in list(state.get("limit_orders", {}).keys()):
         order = state["limit_orders"][tag]
         matched_pos = next((p for p in open_positions if str(p["id"]) == str(order["order_id"])), None) \
@@ -664,9 +673,17 @@ def manage_positions(state):
             }
             del state["limit_orders"][tag]
             notify(f"✅ سفارش لیمیت {tag} فعال شد! پوزیشن {order['symbol']}_{order['side']} وارد بازار شد و مدیریت آن آغاز شد.")
-            open_keys.add(pos_id) # اضافه شدن به لیست پوزیشن‌های باز
+            open_keys.add(pos_id)
 
-    # 👇 FIX 7: بعد انقضای ۲۴ ساعته
+    # ۱.۵ لیمیتی که پر شده و بسته شده (استاپ خورده)
+    closed_ids = {str(p.get("id")) for p in closed_positions}
+    for tag in list(state.get("limit_orders", {}).keys()):
+        order = state["limit_orders"][tag]
+        if str(order.get("order_id")) in closed_ids:
+            notify(f"ℹ️ لیمیت {tag} ({order['symbol']}_{order['side']}) پر شد و قبل از شروع مدیریت بسته شد.")
+            del state["limit_orders"][tag]
+
+    # ۲. بعد انقضای ۲۴ ساعته
     for tag in list(state.get("limit_orders", {}).keys()):
         order = state["limit_orders"][tag]
         if now_ts - order["created"] > LIMIT_ORDER_TTL_SEC:
@@ -890,6 +907,8 @@ def run():
     state = load_state()
     try:
         cleanup_pending(state)
+        bal = get_futures_balance(state)
+        if bal: daily_loss_exceeded(state, bal[0]) # 👈 ثبت مبنای ضرر در ابتدای هر روز
         process_queue(state)
         check_telegram(state)
         manage_positions(state)
