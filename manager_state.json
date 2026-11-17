@@ -27,22 +27,7 @@
     "dashboard_id": 830,
     "auto_dashboard_id": 831,
     "check_engine_id": 832,
-    "active_errors": {
-        "balance_err": {
-            "title": "\u062e\u0637\u0627 \u062f\u0631 \u062e\u0648\u0627\u0646\u062f\u0646 \u0645\u0648\u062c\u0648\u062f\u06cc",
-            "details": "HTTP 500",
-            "level": "\ud83d\udfe1",
-            "time": "20:14",
-            "ts": 1794946496.3625233
-        },
-        "fetch_pos": {
-            "title": "\u062e\u0637\u0627 \u062f\u0631 \u062f\u0631\u06cc\u0627\u0641\u062a \u067e\u0648\u0632\u06cc\u0634\u0646\u200c\u0647\u0627",
-            "details": "\u0627\u062a\u0635\u0627\u0644 \u0628\u0631\u0642\u0631\u0627\u0631 \u0646\u0634\u062f.",
-            "level": "\ud83d\udfe1",
-            "time": "20:15",
-            "ts": 1794946511.8902845
-        }
-    },
+    "active_errors": {},
     "day": "2026-11-17",
     "day_balance": 135.7535418186179
 }
