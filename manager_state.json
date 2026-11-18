@@ -1,27 +1,26 @@
 {
-    "targets": {},
-    "pending": {
-        "XRP_SHORT": [
-            {
-                "symbol": "XRP",
-                "side": "SHORT",
-                "entry": 0.9895,
-                "sl": 0.9935,
-                "tp1": 0.9854,
-                "tp2": 0.9813,
-                "tp3": 0.9772,
-                "tp4": 0.9731,
-                "tp5": 0.969,
-                "current_stage": 0,
-                "closed": false,
-                "is_auto": true,
-                "is_isolated": false,
-                "limit_stage": 99,
-                "fail_count": 0,
-                "created": 1795003270.0765028
-            }
-        ]
+    "targets": {
+        "2674941855": {
+            "symbol": "XRP",
+            "side": "SHORT",
+            "entry": 0.9867,
+            "sl": 0.9935,
+            "tp1": 0.9854,
+            "tp2": 0.9813,
+            "tp3": 0.9772,
+            "tp4": 0.9731,
+            "tp5": 0.969,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": true,
+            "is_isolated": false,
+            "limit_stage": 99,
+            "fail_count": 0,
+            "created": 1795003270.0765028,
+            "missing": 0
+        }
     },
+    "pending": {},
     "limit_orders": {},
     "queue_retries": {},
     "offset": 0,
