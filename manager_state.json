@@ -1,5 +1,25 @@
 {
-    "targets": {},
+    "targets": {
+        "2675791088": {
+            "symbol": "ETH",
+            "side": "LONG",
+            "entry": 1753.2,
+            "sl": 1740.3,
+            "tp1": 1756.05,
+            "tp2": 1764.08,
+            "tp3": 1772.14,
+            "tp4": 1780.25,
+            "tp5": 1788.39,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": true,
+            "is_isolated": false,
+            "limit_stage": 99,
+            "fail_count": 0,
+            "created": 1795019188.0604358,
+            "missing": 0
+        }
+    },
     "pending": {},
     "limit_orders": {},
     "queue_retries": {},
