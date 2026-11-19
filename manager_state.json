@@ -18,6 +18,25 @@
             "fail_count": 0,
             "created": 1795079689.164725,
             "missing": 0
+        },
+        "2679016356": {
+            "symbol": "BNB",
+            "side": "SHORT",
+            "entry": 593.3,
+            "sl": 600.26,
+            "tp1": 589.42,
+            "tp2": 584.61,
+            "tp3": 579.8,
+            "tp4": 574.99,
+            "tp5": 570.18,
+            "current_stage": 0,
+            "closed": false,
+            "is_auto": true,
+            "is_isolated": false,
+            "limit_stage": 99,
+            "fail_count": 0,
+            "created": 1795088457.471435,
+            "missing": 0
         }
     },
     "pending": {},
