@@ -11,10 +11,11 @@ API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
 CHANNEL_ID = -1004400244481
-MAX_AGE_SEC = 420
+MAX_AGE_SEC = 420  # ۷ دقیقه (طبق خواسته خودت)
 
 PROCESSED_FILE = "processed_signals.json"
 QUEUE_FILE = "pending_signals.txt"
+LAST_ID_FILE = "last_msg_id.txt"
 NUM = r'([0-9]+(?:\.[0-9]+)?)'
 HASHTAG_REGEX = r'#[A-Z0-9_]+'
 
@@ -34,6 +35,14 @@ def save_processed(signals):
     with open(PROCESSED_FILE, "w") as f:
         json.dump(signals, f)
 
+def load_last_id():
+    try:
+        with open(LAST_ID_FILE) as f: return int(f.read().strip())
+    except Exception: return None
+
+def save_last_id(i):
+    with open(LAST_ID_FILE, "w") as f: f.write(str(i))
+
 def send_alert(msg):
     url = f"https://api.telegram.org/bot{MAIN_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": MAIN_CHAT_ID, "text": msg, "parse_mode": "HTML"}
@@ -51,13 +60,14 @@ def send_to_main_bot(command):
 
 def fetch_messages(client):
     try:
-        return client.get_messages(CHANNEL_ID, limit=10)
+        return client.get_messages(CHANNEL_ID, limit=30) # افزایش به ۳۰ برای اطمینان از Message ID
     except ValueError:
         client.get_dialogs()
-        return client.get_messages(CHANNEL_ID, limit=10)
+        return client.get_messages(CHANNEL_ID, limit=30)
 
 def find_tag(text_upper):
-    tags = [t for t in re.findall(HASHTAG_REGEX, text_upper) if t != "#SIGNAL"]
+    # 👇 اصلاح: هشتگ‌های عمومی رو نادیده بگیر
+    tags = [t for t in re.findall(HASHTAG_REGEX, text_upper) if t not in ("#SIGNAL", "#FUTURES", "#CRYPTO")]
     return tags[0] if tags else None
 
 def run_listener():
@@ -80,10 +90,13 @@ def run_listener():
                     save_processed(processed)
                 return
 
+            last_id = load_last_id()
+            max_id = max((m.id for m in messages), default=last_id or 0)
             new_processed = False
 
-            # 👇 معکوس کردن ترتیب پیام‌ها (قدیمی‌ترین اول بررسی میشه)
             for msg in reversed(messages):
+                # 👇 فیکس: چک کردن Message ID به جای زمان صرف
+                if last_id is not None and msg.id <= last_id: continue
                 if not msg.raw_text: continue
                 if (now_utc - msg.date).total_seconds() > MAX_AGE_SEC: continue
 
@@ -91,8 +104,10 @@ def run_listener():
                 text_upper = text.upper()
                 current_tag = find_tag(text_upper)
                 is_signal = "ENTER" in text_upper and "STOP LOSS" in text_upper
+                
+                # 👇 اصلاح: تشخیص دقیق کلمه Enter Limit
+                is_limit = "ENTER LIMIT" in text_upper
 
-                # ۱. بررسی پیام کنسل (فقط اگر خود پیام، سیگنال نباشد)
                 if current_tag and not is_signal and any(k in text for k in CANCEL_KEYWORDS):
                     if f"cancel_{current_tag}" not in processed:
                         print(f"🚫 Detected cancel for {current_tag}", flush=True)
@@ -104,7 +119,6 @@ def run_listener():
                 if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text:
                     continue
 
-                # ۲. بررسی سیگنال جدید
                 if "#SIGNAL" in text_upper and is_signal:
                     try:
                         symbol_match = re.search(r'([A-Z0-9]+/USDT)', text) or re.search(r'([A-Z0-9]+)USDT', text)
@@ -123,28 +137,22 @@ def run_listener():
                         if (side == "LONG" and float(sl) >= float(entry)) or (side == "SHORT" and float(sl) <= float(entry)):
                             continue
 
-                        # 👇 استخراج هر تعداد تارگت
                         tps_raw = re.findall(r'TP[1-9]\s*:\s*' + NUM, text, re.IGNORECASE)
                         tps = [float(x) for x in tps_raw]
 
                         if not tps: continue
-                        n_raw = len(tps) # تعداد واقعی
+                        n_raw = len(tps)
 
-                        # 👇 نرمال‌سازی به ۵ تارگت
                         while len(tps) < 5:
                             if len(tps) >= 2:
                                 step = abs(tps[-1] - tps[-2])
                             else:
                                 step = abs(tps[0] - float(entry))
                                 if step == 0: step = float(entry) * 0.01
-                                
-                            if side == "LONG":
-                                tps.append(tps[-1] + step)
-                            else:
-                                tps.append(tps[-1] - step)
-                                
+                            if side == "LONG": tps.append(tps[-1] + step)
+                            else: tps.append(tps[-1] - step)
+                        
                         tps = tps[:5]
-                        # 👇 جلوگیری از تارگت صفر یا منفی
                         if any(x <= 0 for x in tps):
                             print(f"⚠️ Non-positive TP, skipped: {symbol}", flush=True)
                             continue
@@ -153,14 +161,13 @@ def run_listener():
                         fingerprint = f"{symbol}_{side}_{entry}_{sl}"
                         if fingerprint in processed: continue
 
-                        is_limit = "LIMIT" in text_upper
                         if is_limit and not current_tag:
                             send_alert(f"⚠️ سیگنال لیمیت {symbol} هشتگ نداشت و رد شد.")
                             processed.append(fingerprint); new_processed = True
                             continue
 
                         if n_raw < 5:
-                            send_alert(f"ℹ️ {symbol}: چنل فقط {n_raw} تارگت داد؛ بقیه به‌صورت خودکار ساخته شد.")
+                            send_alert(f"ℹ️ {symbol}: چنل فقط {n_raw} تارگت داد؛ بقیه ساخته شد.")
 
                         cmd_type = "/auto_limit" if is_limit else "/auto"
                         tag_suffix = f" {current_tag}" if is_limit else ""
@@ -176,6 +183,10 @@ def run_listener():
             if new_processed:
                 save_processed(processed)
                 print("✅ Saved processed signals.", flush=True)
+            
+            # 👇 ذخیره آخرین ID پردازش شده
+            save_last_id(max_id)
+
     except Exception as e:
         print(f"Listener Fatal Error: {e}", flush=True)
         send_alert(f"🚨 خطای جدی در شنونده: {e}")
