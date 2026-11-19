@@ -53,7 +53,8 @@ jobs:
           
           git rebase --abort || true
           
-          for f in manager_state.json processed_signals.json pending_signals.txt; do
+          # 👇 فایل last_msg_id.txt هم اضافه شد
+          for f in manager_state.json processed_signals.json pending_signals.txt last_msg_id.txt; do
             [ -f "$f" ] && git add "$f"
           done
           
