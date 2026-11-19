@@ -1,6 +1,27 @@
 {
     "targets": {},
-    "pending": {},
+    "pending": {
+        "DOGE_SHORT": [
+            {
+                "symbol": "DOGE",
+                "side": "SHORT",
+                "entry": 0.05963,
+                "sl": 0.05997,
+                "tp1": 0.05928,
+                "tp2": 0.05894,
+                "tp3": 0.05859,
+                "tp4": 0.05824,
+                "tp5": 0.0579,
+                "current_stage": 0,
+                "closed": false,
+                "is_auto": true,
+                "is_isolated": false,
+                "limit_stage": 99,
+                "fail_count": 0,
+                "created": 1795079689.164725
+            }
+        ]
+    },
     "limit_orders": {},
     "queue_retries": {},
     "offset": 0,
