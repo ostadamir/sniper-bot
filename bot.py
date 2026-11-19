@@ -30,7 +30,7 @@ MIN_SL_DIST = 0.001
 MAX_DAILY_LOSS_PERCENT = 30.0
 PENDING_TTL_SEC = 24 * 3600
 LIMIT_ORDER_TTL_SEC = 24 * 3600
-ERROR_TTL_SEC = 30 * 60
+ERROR_TTL_SEC = 12 * 3600 # 👈 تغییر به ۱۲ ساعت (طبق خواسته تو)
 MISSING_LIMIT = 30
 
 USAGE = ("فرمت دستور:\n/new SYMBOL SIDE ENTRY SL TP1 TP2 TP3 TP4 [RF|SAFE]\n/newi ...\n/cancel SYMBOL SIDE\n/auto ...\n/auto_limit ... HASHTAG\n/cancel_limit HASHTAG")
@@ -349,16 +349,12 @@ def handle_cancel_limit(state, parts):
         notify(f"ℹ️ سفارش لیمیت {tag} در لیست نبود (قبلاً فعال یا کنسل شده)."); return
 
     order_id = order_info.get("order_id")
+    # 👇 FIX 1: اگر کنسل ناموفق بود، خطا بده تا صف دوباره تلاش کنه
     if order_id and cancel_limit_order(state, order_id):
         notify(f"🚫 سفارش لیمیت {tag} ({order_info['symbol']}) طبق پیام چنل کنسل شد.")
         del state["limit_orders"][tag]
     else:
-        order_info["cancel_fail"] = order_info.get("cancel_fail", 0) + 1
-        if order_info["cancel_fail"] >= 3:
-            notify(f"⚠️ کنسل {tag} سه بار ناموفق بود. از لیست حذف شد؛ در صرافی بررسی کن.")
-            del state["limit_orders"][tag]
-        else:
-            notify(f"⚠️ کنسل {tag} ناموفق بود (شاید پر شده). دوباره بررسی می‌شود.")
+        raise RuntimeError(f"cancel {tag} failed")
 
 def handle_new(state, parts, is_isolated=False):
     limit_stage = 99
@@ -418,6 +414,15 @@ def handle_auto(state, parts, is_limit=False):
     try: e = float(parts[3]); s = float(parts[4]); tps = [float(x) for x in parts[5:10]]
     except ValueError: notify("❌ اعداد معتبر نیستند."); return
 
+    # 👇 فیلتر استاپ ۱ درصد و بافر ۰.۲۵ درصد
+    sl_dist = abs(e - s) / e
+    if sl_dist > 0.01:
+        notify(f"⛔ {symbol}_{sd} رد شد: استاپ سیگنال {sl_dist*100:.2f}% است (بیشتر از ۱٪ مجاز).")
+        return
+    
+    g = 1 if sd == "LONG" else -1
+    s = s - (g * e * 0.0025)
+
     err, fixed_tps, fix_msg = valid_signal(sd, e, s, tps, AUTO_LEVERAGE)
     if err:
         notify(f"❌ {symbol}_{sd} رد شد ({err})."); return
@@ -443,33 +448,7 @@ def handle_auto(state, parts, is_limit=False):
         if dev > MAX_ENTRY_DEV:
             notify(f"⛔ {symbol}_{sd} رد شد: قیمت بازار {dev*100:.1f}٪ فاصله دارد."); return
 
-    st, resp = tt_request("GET", "/futures/positions")
-    if st != 200 or not isinstance(resp, dict):
-        notify("⚠️ لیست پوزیشن‌ها خوانده نشد؛ سیگنال رد شد."); return
-    items = resp.get("items", [])
-
-    for p in items:
-        if p.get("status") == "OPENED" and p.get("symbol") == f"{symbol}USDT" and p.get("side") == sd:
-            notify(f"⚠️ {symbol}_{sd} همین الان باز است."); return
-
-    open_auto = [p for p in items if p.get("status") == "OPENED" and state["targets"].get(str(p["id"]), {}).get("is_auto")]
-
-    if is_limit:
-        if len(open_auto) + len(state["limit_orders"]) >= MAX_AUTO_POSITIONS:
-            notify(f"⚠️ سقف پوزیشن/لیمیت پر است؛ لیمیت {symbol}_{sd} رد شد."); return
-    elif len(open_auto) >= MAX_AUTO_POSITIONS:
-        open_auto.sort(key=lambda x: str(x.get("createdAt", "")))
-        oldest = open_auto[0]
-        oldest_id = str(oldest["id"])
-        pnl_old = float(oldest.get("unrealizedPnL") or 0)
-        if pnl_old >= 0.01 and close_position_market(state, oldest_id):
-            state["targets"].pop(oldest_id, None)
-            notify(f"♻️ پوزیشن قدیمی {oldest.get('symbol')} با سود {pnl_old:+.2f}$ نقد شد.")
-            time.sleep(2)
-        else:
-            notify(f"⚠️ سقف پر است و قدیمی‌ترین پوزیشن بسته نشد (PnL: {pnl_old:+.2f}$). سیگنال رد شد.")
-            return
-
+    # 👇 FIX 2: چک کردن موجودی و سقف ضرر قبل از بستن پوزیشن قدیمی
     bal = get_futures_balance(state)
     if bal is None:
         notify("⚠️ موجودی خوانده نشد؛ سیگنال رد شد."); return
@@ -482,11 +461,39 @@ def handle_auto(state, parts, is_limit=False):
     if margin_to_use < 1.0:
         notify(f"⚠️ مارجین کم است (آزاد: {available:.2f}$)."); return
 
+    st, resp = tt_request("GET", "/futures/positions")
+    if st != 200 or not isinstance(resp, dict):
+        notify("⚠️ لیست پوزیشن‌ها خوانده نشد؛ سیگنال رد شد."); return
+    items = resp.get("items", [])
+
+    for p in items:
+        if p.get("status") == "OPENED" and p.get("symbol") == f"{symbol}USDT" and p.get("side") == sd:
+            notify(f"⚠️ {symbol}_{sd} همین الان باز است."); return
+
+    open_auto = [p for p in items if p.get("status") == "OPENED" and state["targets"].get(str(p["id"]), {}).get("is_auto")]
+
+    # 👇 FIX 4: سقف پوزیشن برای مارکت و لیمیت یکسان
+    total_auto = len(open_auto) + len(state["limit_orders"])
+    if total_auto >= MAX_AUTO_POSITIONS:
+        if open_auto:
+            open_auto.sort(key=lambda x: str(x.get("createdAt", "")))
+            oldest = open_auto[0]
+            oldest_id = str(oldest["id"])
+            pnl_old = float(oldest.get("unrealizedPnL") or 0)
+            if pnl_old >= 0.01 and close_position_market(state, oldest_id):
+                state["targets"].pop(oldest_id, None)
+                notify(f"♻️ پوزیشن قدیمی {oldest.get('symbol')} با سود {pnl_old:+.2f}$ نقد شد.")
+                time.sleep(2)
+            else:
+                notify(f"⚠️ سقف پر است و قدیمی‌ترین پوزیشن بسته نشد (PnL: {pnl_old:+.2f}$). سیگنال رد شد.")
+                return
+        else:
+            notify(f"⚠️ سقف لیمیت‌ها پر است. سیگنال رد شد."); return
+
     res = open_auto_position(state, symbol, sd, margin_to_use, AUTO_LEVERAGE, s, tps[4], is_limit=is_limit, entry=e)
     if res is None: return
 
     if is_limit:
-        # 👇 برای لیمیت، هم orderId و هم id رو چک میکنیم
         order_id = extract_id(res, keys=("id", "orderId", "positionId"))
         if order_id:
             state["limit_orders"][tag] = {
@@ -498,7 +505,6 @@ def handle_auto(state, parts, is_limit=False):
         else:
             notify(f"⚠️ سفارش لیمیت ثبت شد ولی ID پیدا نشد. مدیریت دستی لازم است.")
     else:
-        # 👇 برای مارکت، فقط positionId یا id رو قبول میکنیم
         pos_id = extract_id(res, keys=("positionId", "id"))
         new_sig = {"symbol": symbol, "side": sd, "entry": e, "sl": s, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3], "tp5": tps[4], "current_stage": 0, "closed": False, "is_auto": True, "is_isolated": False, "limit_stage": 99, "fail_count": 0, "created": time.time()}
         if pos_id:
@@ -522,7 +528,7 @@ def process_queue(state):
             if line.startswith("/auto_limit"): handle_auto(state, parts, is_limit=True)
             elif line.startswith("/auto"): handle_auto(state, parts, is_limit=False)
             elif line.startswith("/cancel_limit"): handle_cancel_limit(state, parts)
-            tries.pop(line, None) # موفق بود، از لیست تلاش‌ها پاک میشه
+            tries.pop(line, None) 
         except Exception as e:
             notify(f"⚠️ خطا در پردازش سیگنال: {html.escape(repr(e))}")
             tries[line] = tries.get(line, 0) + 1
@@ -553,6 +559,9 @@ def check_telegram(state):
                     elif cmd == "/new": handle_new(state, parts, is_isolated=False)
                     elif cmd == "/newi": handle_new(state, parts, is_isolated=True)
                     elif cmd == "/auto": handle_auto(state, parts, is_limit=False)
+                    # 👇 FIX 6: اضافه شدن کامندهای لیمیت به تلگرام
+                    elif cmd == "/auto_limit": handle_auto(state, parts, is_limit=True)
+                    elif cmd == "/cancel_limit": handle_cancel_limit(state, parts)
                     elif cmd == "/balance":
                         bal = get_futures_balance(state)
                         notify(f"💰 موجودی: {bal[0]:.2f}$ (آزاد: {bal[1]:.2f}$)" if bal else "⚠️ خطا")
@@ -658,7 +667,6 @@ def manage_positions(state):
     closed_positions = [p for p in items if p.get("status") == "CLOSED"]
     open_keys = {str(p["id"]) for p in open_positions}
 
-    # ۱. اول: تشخیص پر شدن لیمیت‌ها
     for tag in list(state.get("limit_orders", {}).keys()):
         order = state["limit_orders"][tag]
         matched_pos = next((p for p in open_positions if str(p["id"]) == str(order["order_id"])), None) \
@@ -675,7 +683,6 @@ def manage_positions(state):
             notify(f"✅ سفارش لیمیت {tag} فعال شد! پوزیشن {order['symbol']}_{order['side']} وارد بازار شد و مدیریت آن آغاز شد.")
             open_keys.add(pos_id)
 
-    # ۱.۵ لیمیتی که پر شده و بسته شده (استاپ خورده)
     closed_ids = {str(p.get("id")) for p in closed_positions}
     for tag in list(state.get("limit_orders", {}).keys()):
         order = state["limit_orders"][tag]
@@ -683,7 +690,6 @@ def manage_positions(state):
             notify(f"ℹ️ لیمیت {tag} ({order['symbol']}_{order['side']}) پر شد و قبل از شروع مدیریت بسته شد.")
             del state["limit_orders"][tag]
 
-    # ۲. بعد انقضای ۲۴ ساعته
     for tag in list(state.get("limit_orders", {}).keys()):
         order = state["limit_orders"][tag]
         if now_ts - order["created"] > LIMIT_ORDER_TTL_SEC:
@@ -736,6 +742,21 @@ def manage_positions(state):
         if entry > 0: t["entry"] = entry
         entry = t["entry"]
         roi = (pnl / margin) * 100
+
+        # ===== FIX: محاسبه قیمت واقعی از روی PnL =====
+        lev = 0.0
+        try: lev = float(pos.get("leverage") or 0)
+        except (TypeError, ValueError): lev = 0.0
+        if lev <= 0 and is_auto: lev = float(AUTO_LEVERAGE)
+        if lev > 0 and entry > 0:
+            move = pnl / (margin * lev)
+            implied = entry * (1 + move) if is_long else entry * (1 - move)
+            if implied > 0 and abs(price - implied) / implied > 0.005:
+                report_error(state, f"mark_{pos_id}", "مغایرت قیمت مارک",
+                             f"{key_base}: صرافی {price} | محاسبه‌شده {implied:.8g}", "🟡")
+                price = implied
+            else:
+                resolve_error(state, f"mark_{pos_id}")
         tol = max(1e-8, price * 1e-5)
 
         if is_auto:
@@ -779,7 +800,6 @@ def manage_positions(state):
             if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
             continue
 
-        # --- Manual Logic ---
         if not is_isolated:
             manual_pnl += pnl; manual_margin += margin
             
@@ -800,6 +820,9 @@ def manage_positions(state):
                         cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
                 else:
                     t["current_stage"] = stage
+            else:
+                # 👇 اضافه شدن لاگ برای شرط is_behind
+                report_error(state, f"behind_{pos_id}", "استاپ پشت قیمت", f"{key_base}: قیمت {price} از استاپ جدید {final_sl} رد شده.", "🟡")
 
         stage_txt, path_txt = STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
         target = t.get("tp4", cur_tp)
@@ -828,6 +851,9 @@ def manage_positions(state):
             tg["missing"] = tg.get("missing", 0) + 1
             if tg["missing"] >= MISSING_LIMIT:
                 notify(f"🧹 پوزیشن {tg.get('symbol')}_{tg.get('side')} مدت‌هاست در صرافی پیدا نمی‌شود؛ از مدیریت حذف شد.")
+                # 👇 FIX 5: پاک کردن خطاهای مربوطه
+                resolve_error(state, f"patch_{key}"); resolve_error(state, f"close_{key}")
+                resolve_error(state, f"mark_{key}"); resolve_error(state, f"behind_{key}")
                 del state["targets"][key]
             continue
             
@@ -849,6 +875,9 @@ def manage_positions(state):
         msg += f"سود/ضرر: <code>{pnl:+.2f} USDT</code> {emoji}"
         
         notify(msg)
+        # 👇 FIX 5: پاک کردن خطاهای مربوطه
+        resolve_error(state, f"patch_{key}"); resolve_error(state, f"close_{key}")
+        resolve_error(state, f"mark_{key}"); resolve_error(state, f"behind_{key}")
         del state["targets"][key]
 
     if manual_margin > 0:
@@ -864,6 +893,9 @@ def manage_positions(state):
                 if not p_t.get("is_auto") and not p_t.get("is_isolated"):
                     if close_position_market(state, pid):
                         notify(f"🏁 {pos['symbol'].replace('USDT', '')}_{pos['side']} بسته شد (هدف سبد): <code>{float(pos.get('unrealizedPnL') or 0):+.2f} USDT</code>")
+                        # 👇 FIX 5: پاک کردن خطاهای مربوطه
+                        resolve_error(state, f"patch_{pid}"); resolve_error(state, f"close_{pid}")
+                        resolve_error(state, f"mark_{pid}"); resolve_error(state, f"behind_{pid}")
                         state["targets"].pop(pid, None)
             return 
 
@@ -908,7 +940,7 @@ def run():
     try:
         cleanup_pending(state)
         bal = get_futures_balance(state)
-        if bal: daily_loss_exceeded(state, bal[0]) # 👈 ثبت مبنای ضرر در ابتدای هر روز
+        if bal: daily_loss_exceeded(state, bal[0])
         process_queue(state)
         check_telegram(state)
         manage_positions(state)
