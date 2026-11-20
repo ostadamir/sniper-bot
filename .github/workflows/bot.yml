@@ -35,6 +35,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}  # 👈 این خط اضافه شد
         run: python -u listener.py
 
       - name: Run Manager Bot
@@ -53,7 +54,6 @@ jobs:
           
           git rebase --abort || true
           
-          # 👇 فایل last_msg_id.txt هم اضافه شد
           for f in manager_state.json processed_signals.json pending_signals.txt last_msg_id.txt; do
             [ -f "$f" ] && git add "$f"
           done
