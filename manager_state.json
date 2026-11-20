@@ -9,5 +9,8 @@
     "check_engine_id": 862,
     "active_errors": {},
     "day": "2026-11-21",
-    "day_balance": 120.13778666437908
+    "day_balance": 120.13778666437908,
+    "manual_positions": {},
+    "custom_positions": {},
+    "custom_dashboard_id": 871
 }
