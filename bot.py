@@ -14,7 +14,7 @@ QUEUE_FILE = "pending_signals.txt"
 
 # ===== تنظیمات مدیریت سرمایه =====
 PORTFOLIO_TP_PERCENT_1 = 10.0  
-PORTFOLIO_TP_PERCENT_2 = 10.2   
+PORTFOLIO_TP_PERCENT_2 = 11.2   
 PORTFOLIO_TP_PERCENT_3 = 14.8   
 PORTFOLIO_TP_PERCENT_4 = 15.0   
 PORTFOLIO_TP_PERCENT_5 = 4.0   
@@ -30,10 +30,17 @@ MIN_SL_DIST = 0.001
 MAX_DAILY_LOSS_PERCENT = 30.0
 PENDING_TTL_SEC = 24 * 3600
 LIMIT_ORDER_TTL_SEC = 24 * 3600
-ERROR_TTL_SEC = 12 * 3600 # 👈 تغییر به ۱۲ ساعت (طبق خواسته تو)
+ERROR_TTL_SEC = 12 * 3600 
 MISSING_LIMIT = 30
 
-USAGE = ("فرمت دستور:\n/new SYMBOL SIDE ENTRY SL TP1 TP2 TP3 TP4 [RF|SAFE]\n/newi ...\n/cancel SYMBOL SIDE\n/auto ...\n/auto_limit ... HASHTAG\n/cancel_limit HASHTAG")
+USAGE = ("فرمت دستورات:\n"
+         "سیگنال خودکار: /auto SYMBOL SIDE ENTRY SL TP1 TP2 TP3 TP4\n"
+         "لیمیت خودکار: /auto_limit SYMBOL SIDE ENTRY SL TP1 TP2 TP3 TP4 #TAG\n"
+         "پوزیشن دستی (بدون مدیریت استاپ): /manual SYMBOL SIDE ENTRY MARGIN LEVERAGE\n"
+         "پوزیشن کاستوم (مدیریت استاپ خاص): /custom SYMBOL SIDE ENTRY MARGIN LEVERAGE SL TP1 TP2 TP3 TP4\n"
+         "لغو سیگنال: /cancel SYMBOL SIDE\n"
+         "لغو لیمیت: /cancel_limit #TAG\n"
+         "رهاسازی پوزیشن: /release SYMBOL SIDE")
 
 def _norm(x): return str(x or "").strip().lower()
 def strip_tags(t): return html.unescape(re.sub(r"<[^>]+>", "", str(t)))
@@ -165,8 +172,7 @@ def close_position_market(state, pos_id):
 
 def cancel_limit_order(state, order_id):
     st, res = tt_request("DELETE", f"/futures/orders/{order_id}")
-    if st in (200, 201, 204):
-        return True
+    if st in (200, 201, 204): return True
     print(f"Cancel Failed: {st} | {res}")
     return False
 
@@ -296,7 +302,8 @@ def open_auto_position(state, symbol, side, margin_usdt, leverage, sl, tp, is_li
 def new_state(): return {
     "targets": {}, "pending": {}, "limit_orders": {}, "queue_retries": {}, "offset": 0, 
     "dashboard_id": None, "auto_dashboard_id": None, "check_engine_id": None, 
-    "active_errors": {}, "day": None, "day_balance": 0.0
+    "active_errors": {}, "day": None, "day_balance": 0.0,
+    "manual_positions": {}, "custom_positions": {} # لیست‌های جدید
 }
 
 def load_state():
@@ -349,7 +356,6 @@ def handle_cancel_limit(state, parts):
         notify(f"ℹ️ سفارش لیمیت {tag} در لیست نبود (قبلاً فعال یا کنسل شده)."); return
 
     order_id = order_info.get("order_id")
-    # 👇 FIX 1: اگر کنسل ناموفق بود، خطا بده تا صف دوباره تلاش کنه
     if order_id and cancel_limit_order(state, order_id):
         notify(f"🚫 سفارش لیمیت {tag} ({order_info['symbol']}) طبق پیام چنل کنسل شد.")
         del state["limit_orders"][tag]
@@ -365,8 +371,7 @@ def handle_new(state, parts, is_isolated=False):
         mode_str = mode
         parts = parts[:-1]
 
-    if len(parts) > 9:
-        parts = parts[:9] 
+    if len(parts) > 9: parts = parts[:9] 
     elif len(parts) == 8:
         try: parts.append(str(round(float(parts[7]) + (float(parts[7]) - float(parts[6])), 8)))
         except: pass
@@ -402,37 +407,30 @@ def handle_new(state, parts, is_isolated=False):
 def handle_auto(state, parts, is_limit=False):
     tag = None
     if is_limit:
-        if len(parts) < 11:
-            notify("❌ /auto_limit بدون هشتگ رد شد."); return
-        tag = parts[-1]
-        parts = parts[:-1]
+        if len(parts) < 11: notify("❌ /auto_limit بدون هشتگ رد شد."); return
+        tag = parts[-1]; parts = parts[:-1]
 
-    if len(parts) < 10:
-        notify("❌ فرمت اشتباه."); return
+    if len(parts) < 10: notify("❌ فرمت اشتباه."); return
 
     symbol = parts[1].upper().replace("USDT", ""); sd = parts[2].upper()
     try: e = float(parts[3]); s = float(parts[4]); tps = [float(x) for x in parts[5:10]]
     except ValueError: notify("❌ اعداد معتبر نیستند."); return
 
-    # 👇 فیلتر استاپ ۱ درصد و بافر ۰.۲۵ درصد
     sl_dist = abs(e - s) / e
     if sl_dist > 0.01:
-        notify(f"⛔ {symbol}_{sd} رد شد: استاپ سیگنال {sl_dist*100:.2f}% است (بیشتر از ۱٪ مجاز).")
-        return
+        notify(f"⛔ {symbol}_{sd} رد شد: استاپ سیگنال {sl_dist*100:.2f}% است (بیشتر از ۱٪ مجاز)."); return
     
     g = 1 if sd == "LONG" else -1
     s = s - (g * e * 0.0025)
 
     err, fixed_tps, fix_msg = valid_signal(sd, e, s, tps, AUTO_LEVERAGE)
-    if err:
-        notify(f"❌ {symbol}_{sd} رد شد ({err})."); return
+    if err: notify(f"❌ {symbol}_{sd} رد شد ({err})."); return
     if fix_msg:
         notify(f"⚠️ {symbol}_{sd}:\n{fix_msg}")
         tps = fixed_tps
 
     price = get_market_price(state, symbol)
-    if price is None:
-        notify(f"⚠️ قیمت {symbol} گرفته نشد؛ سیگنال رد شد."); return
+    if price is None: notify(f"⚠️ قیمت {symbol} گرفته نشد؛ سیگنال رد شد."); return
 
     if is_limit:
         if (sd == "LONG" and e >= price) or (sd == "SHORT" and e <= price):
@@ -448,22 +446,18 @@ def handle_auto(state, parts, is_limit=False):
         if dev > MAX_ENTRY_DEV:
             notify(f"⛔ {symbol}_{sd} رد شد: قیمت بازار {dev*100:.1f}٪ فاصله دارد."); return
 
-    # 👇 FIX 2: چک کردن موجودی و سقف ضرر قبل از بستن پوزیشن قدیمی
     bal = get_futures_balance(state)
-    if bal is None:
-        notify("⚠️ موجودی خوانده نشد؛ سیگنال رد شد."); return
+    if bal is None: notify("⚠️ موجودی خوانده نشد؛ سیگنال رد شد."); return
     balance, available = bal
     if daily_loss_exceeded(state, balance):
         notify(f"⛔ سقف ضرر روزانه ({MAX_DAILY_LOSS_PERCENT}٪) پر شده."); return
 
     target_margin = balance * AUTO_MARGIN_PERCENT / 100.0
     margin_to_use = min(target_margin, available * 0.98)
-    if margin_to_use < 1.0:
-        notify(f"⚠️ مارجین کم است (آزاد: {available:.2f}$)."); return
+    if margin_to_use < 1.0: notify(f"⚠️ مارجین کم است (آزاد: {available:.2f}$)."); return
 
     st, resp = tt_request("GET", "/futures/positions")
-    if st != 200 or not isinstance(resp, dict):
-        notify("⚠️ لیست پوزیشن‌ها خوانده نشد؛ سیگنال رد شد."); return
+    if st != 200 or not isinstance(resp, dict): notify("⚠️ لیست پوزیشن‌ها خوانده نشد؛ سیگنال رد شد."); return
     items = resp.get("items", [])
 
     for p in items:
@@ -471,8 +465,6 @@ def handle_auto(state, parts, is_limit=False):
             notify(f"⚠️ {symbol}_{sd} همین الان باز است."); return
 
     open_auto = [p for p in items if p.get("status") == "OPENED" and state["targets"].get(str(p["id"]), {}).get("is_auto")]
-
-    # 👇 FIX 4: سقف پوزیشن برای مارکت و لیمیت یکسان
     total_auto = len(open_auto) + len(state["limit_orders"])
     if total_auto >= MAX_AUTO_POSITIONS:
         if open_auto:
@@ -485,8 +477,7 @@ def handle_auto(state, parts, is_limit=False):
                 notify(f"♻️ پوزیشن قدیمی {oldest.get('symbol')} با سود {pnl_old:+.2f}$ نقد شد.")
                 time.sleep(2)
             else:
-                notify(f"⚠️ سقف پر است و قدیمی‌ترین پوزیشن بسته نشد (PnL: {pnl_old:+.2f}$). سیگنال رد شد.")
-                return
+                notify(f"⚠️ سقف پر است و قدیمی‌ترین پوزیشن بسته نشد (PnL: {pnl_old:+.2f}$). سیگنال رد شد."); return
         else:
             notify(f"⚠️ سقف لیمیت‌ها پر است. سیگنال رد شد."); return
 
@@ -514,6 +505,45 @@ def handle_auto(state, parts, is_limit=False):
             state["pending"].setdefault(f"{symbol}_{sd}", []).append(new_sig)
             notify(f"🤖 پوزیشن {symbol}_{sd} باز شد (در انتظار اتصال).")
 
+# ================= New Handlers (Manual & Custom) =================
+def handle_manual(state, parts):
+    if len(parts) < 6:
+        notify("❌ فرمت: /manual SYMBOL SIDE ENTRY MARGIN LEVERAGE"); return
+    symbol = parts[1].upper().replace("USDT", ""); sd = parts[2].upper()
+    try: e = float(parts[3]); margin = float(parts[4]); lev = float(parts[5])
+    except ValueError: notify("❌ اعداد معتبر نیستند."); return
+    
+    key = f"{symbol}_{sd}"
+    state["manual_positions"][key] = {"symbol": symbol, "side": sd, "entry": e, "margin": margin, "leverage": lev, "created": time.time()}
+    notify(f"👁️ پوزیشن دستی {key} ثبت شد.\nبدون مدیریت استاپ | شامل در سود سبد")
+
+def handle_custom(state, parts):
+    if len(parts) < 11:
+        notify("❌ فرمت: /custom SYMBOL SIDE ENTRY MARGIN LEVERAGE SL TP1 TP2 TP3 TP4"); return
+    symbol = parts[1].upper().replace("USDT", ""); sd = parts[2].upper()
+    try:
+        e = float(parts[3]); margin = float(parts[4]); lev = float(parts[5])
+        sl = float(parts[6]); tps = [float(x) for x in parts[7:11]]
+    except ValueError: notify("❌ اعداد معتبر نیستند."); return
+    
+    key = f"{symbol}_{sd}"
+    state["custom_positions"][key] = {
+        "symbol": symbol, "side": sd, "entry": e, "margin": margin, "leverage": lev,
+        "sl": sl, "tp1": tps[0], "tp2": tps[1], "tp3": tps[2], "tp4": tps[3],
+        "stage": 0, "created": time.time()
+    }
+    notify(f"⚙️ پوزیشن کاستوم {key} ثبت شد.\nمدیریت استاپ اختصاصی | خارج از سود سبد")
+
+def handle_release(state, parts):
+    if len(parts) < 3: return
+    symbol = parts[1].upper().replace("USDT", ""); side = parts[2].upper()
+    key = f"{symbol}_{side}"
+    msg = ""
+    if key in state["manual_positions"]: del state["manual_positions"][key]; msg += "از لیست دستی "
+    if key in state["custom_positions"]: del state["custom_positions"][key]; msg += "از لیست کاستوم "
+    if msg: notify(f"🔓 پوزیشن {key} {msg}رها شد.")
+    else: notify(f"⚠️ پوزیشن {key} در لیست‌های دستی و کاستوم نبود.")
+
 def process_queue(state):
     if not os.path.exists(QUEUE_FILE): return
     with open(QUEUE_FILE, "r") as f: lines = f.readlines()
@@ -532,8 +562,7 @@ def process_queue(state):
         except Exception as e:
             notify(f"⚠️ خطا در پردازش سیگنال: {html.escape(repr(e))}")
             tries[line] = tries.get(line, 0) + 1
-            if tries[line] < 3:
-                remaining.append(line)
+            if tries[line] < 3: remaining.append(line)
             else:
                 tries.pop(line, None)
                 notify(f"🗑️ دستور بعد از ۳ بار تلاش حذف شد:\n<code>{html.escape(line)}</code>")
@@ -559,12 +588,15 @@ def check_telegram(state):
                     elif cmd == "/new": handle_new(state, parts, is_isolated=False)
                     elif cmd == "/newi": handle_new(state, parts, is_isolated=True)
                     elif cmd == "/auto": handle_auto(state, parts, is_limit=False)
-                    # 👇 FIX 6: اضافه شدن کامندهای لیمیت به تلگرام
                     elif cmd == "/auto_limit": handle_auto(state, parts, is_limit=True)
                     elif cmd == "/cancel_limit": handle_cancel_limit(state, parts)
+                    elif cmd == "/manual": handle_manual(state, parts)
+                    elif cmd == "/custom": handle_custom(state, parts)
+                    elif cmd == "/release": handle_release(state, parts)
                     elif cmd == "/balance":
                         bal = get_futures_balance(state)
                         notify(f"💰 موجودی: {bal[0]:.2f}$ (آزاد: {bal[1]:.2f}$)" if bal else "⚠️ خطا")
+                    elif cmd == "/start": notify(USAGE)
                     elif cmd.startswith("/"): notify(f"❓ ناشناخته: {cmd}")
                 except Exception as e: notify(f"⚠️ خطا در {cmd}: {html.escape(repr(e))}")
         if r.get("result"): requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates", params={"offset": state["offset"], "limit": 1, "timeout": 0}, timeout=15)
@@ -613,7 +645,7 @@ def next_auto_stage(t, is_long, entry, price):
         new_sl = t["tp1"] - (g * dist * 0.2)
         return 2, new_sl, "TP3 (قفل ۸۰٪ مسیر TP1)"
     elif t["current_stage"] == 2 and hit(t["tp4"]): 
-        return 3, t["tp2"], "TP4 (قفل TP2)"
+        return 3, t["tp1"], "TP4 (قفل TP1)" # 👈 تغییر یافته به TP1
     elif t["current_stage"] == 3 and hit(t["tp5"]): 
         return 4, t["tp4"], "TP5 (کلوز)"
     return t["current_stage"], 0, ""
@@ -637,8 +669,18 @@ AUTO_STAGE_TEXT = {
     0: ("منتظر TP2", "TP2"),
     1: ("✅ TP2 زده شد (قفل ۸۰٪ ریسک)", "TP3"),
     2: ("✅ TP3 زده شد (قفل ۸۰٪ TP1)", "TP4"),
-    3: ("✅ TP4 زده شد (قفل TP2)", "TP5 (کلوز)"),
+    3: ("✅ TP4 زده شد (قفل TP1)", "TP5 (کلوز)"), # 👈 تغییر یافته
     4: ("✅ TP5 (کلوز)", "") 
+}
+
+CUSTOM_STAGE_TEXT = {
+    0: ("⏳ در انتظار ۹۳٪ مسیر TP1", "۹۳٪ مسیر TP1"),
+    1: ("✅ استاپ روی ۸۵٪ قفل شد (تارگت TP4)", "TP1.3"),
+    2: ("✅ استاپ روی TP1", "TP2"),
+    3: ("✅ استاپ روی TP1.5", "TP2.5"),
+    4: ("✅ استاپ روی TP2", "TP3"),
+    5: ("✅ استاپ روی TP2.5", "TP3.5"),
+    6: ("✅ استاپ روی TP3", "TP4 (کلوز)")
 }
 
 def get_close_status(stage, why, is_auto=False):
@@ -704,144 +746,218 @@ def manage_positions(state):
 
     manual_parts = ["📊 <b>داشبورد دستی</b>"]
     auto_parts = ["🤖 <b>داشبورد خودکار</b>"]
+    custom_parts = ["⚙️ <b>داشبورد کاستوم</b>"]
+    
     manual_pnl, manual_margin = 0.0, 0.0 
     manual_unmanaged = []
 
     for pos in open_positions:
         pos_id = str(pos["id"]); symbol = pos["symbol"].replace("USDT", ""); side = pos["side"]; key_base = f"{symbol}_{side}"
 
-        if pos_id not in state["targets"]:
-            queue = state["pending"].get(key_base)
-            if queue:
-                sig = queue.pop(0)
-                if not queue: del state["pending"][key_base]
-                sig["symbol"], sig["side"] = symbol, side
-                state["targets"][pos_id] = sig
-                notify(f"🔗 اتصال موفق!\nپوزیشن {key_base} متصل شد.")
-            else: manual_unmanaged.append(key_base); continue
-
-        t = state["targets"].get(pos_id)
-        if not t or t.get("closed", False): continue
-        t["missing"] = 0
-        
-        is_auto = t.get("is_auto", False)
-        is_isolated = t.get("is_isolated", False)
-        price = float(pos.get("markPrice") or 0)
-        cur_sl = float(pos.get("stopLoss") or 0)
-        cur_tp = float(pos.get("takeProfit") or 0)
-        pnl = float(pos.get("unrealizedPnL") or 0)
-        margin = float(pos.get("initialMargin") or 0)
-        size = float(pos.get("size") or 0)
-        
-        if price <= 0 or margin <= 0 or size <= 0: continue
-        if cur_tp <= 0: cur_tp = t.get("tp4", t.get("tp5", 0))
+        # 👇 پردازش پوزیشن‌های خودکار و سیگنالی
+        if pos_id in state["targets"]:
+            t = state["targets"][pos_id]
+            if not t or t.get("closed", False): continue
+            t["missing"] = 0
             
-        is_long = (side == "LONG")
-        entry = float(pos.get("entryPrice") or 0)
-        if entry <= 0: entry = price - pnl / size if is_long else price + pnl / size
-        if entry > 0: t["entry"] = entry
-        entry = t["entry"]
-        roi = (pnl / margin) * 100
+            is_auto = t.get("is_auto", False)
+            is_isolated = t.get("is_isolated", False)
+            price = float(pos.get("markPrice") or 0)
+            cur_sl = float(pos.get("stopLoss") or 0)
+            cur_tp = float(pos.get("takeProfit") or 0)
+            pnl = float(pos.get("unrealizedPnL") or 0)
+            margin = float(pos.get("initialMargin") or 0)
+            size = float(pos.get("size") or 0)
+            
+            if price <= 0 or margin <= 0 or size <= 0: continue
+            if cur_tp <= 0: cur_tp = t.get("tp4", t.get("tp5", 0))
+                
+            is_long = (side == "LONG")
+            entry = float(pos.get("entryPrice") or 0)
+            if entry <= 0: entry = price - pnl / size if is_long else price + pnl / size
+            if entry > 0: t["entry"] = entry
+            entry = t["entry"]
+            roi = (pnl / margin) * 100
 
-        # ===== FIX: محاسبه قیمت واقعی از روی PnL =====
-        lev = 0.0
-        try: lev = float(pos.get("leverage") or 0)
-        except (TypeError, ValueError): lev = 0.0
-        if lev <= 0 and is_auto: lev = float(AUTO_LEVERAGE)
-        if lev > 0 and entry > 0:
-            move = pnl / (margin * lev)
-            implied = entry * (1 + move) if is_long else entry * (1 - move)
-            if implied > 0 and abs(price - implied) / implied > 0.005:
-                report_error(state, f"mark_{pos_id}", "مغایرت قیمت مارک",
-                             f"{key_base}: صرافی {price} | محاسبه‌شده {implied:.8g}", "🟡")
-                price = implied
-            else:
-                resolve_error(state, f"mark_{pos_id}")
-        tol = max(1e-8, price * 1e-5)
-
-        if is_auto:
-            closed_now = False
-            while True:
-                stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
-                if stage <= t["current_stage"]: break
-                if stage == 4:
-                    if close_position_market(state, pos_id):
-                        notify(f"🎯 تارگت نهایی {key_base} زده شد و پوزیشن بسته شد.")
-                        state["targets"].pop(pos_id, None)
-                        closed_now = True
-                    break
-                if not reason: break
-                payload_sl = max(cur_sl, new_sl) if is_long else (min(cur_sl, new_sl) if cur_sl > 0 else new_sl)
-                if abs(cur_sl - payload_sl) > 1e-6:
-                    if patch_tpsl(state, pos_id, payload_sl, t.get("tp5", cur_tp)):
-                        cur_sl = payload_sl
-                        t["current_stage"] = stage
-                    else:
-                        break 
+            lev = 0.0
+            try: lev = float(pos.get("leverage") or 0)
+            except (TypeError, ValueError): lev = 0.0
+            if lev <= 0 and is_auto: lev = float(AUTO_LEVERAGE)
+            if lev > 0 and entry > 0:
+                move = pnl / (margin * lev)
+                implied = entry * (1 + move) if is_long else entry * (1 - move)
+                if implied > 0 and abs(price - implied) / implied > 0.005:
+                    report_error(state, f"mark_{pos_id}", "مغایرت قیمت مارک",
+                                 f"{key_base}: صرافی {price} | محاسبه‌شده {implied:.8g}", "🟡")
+                    price = implied
                 else:
-                    t["current_stage"] = stage
+                    resolve_error(state, f"mark_{pos_id}")
+            tol = max(1e-8, price * 1e-5)
 
-            if closed_now: continue
+            if is_auto:
+                closed_now = False
+                while True:
+                    stage, new_sl, reason = next_auto_stage(t, is_long, entry, price)
+                    if stage <= t["current_stage"]: break
+                    if stage == 4:
+                        if close_position_market(state, pos_id):
+                            notify(f"🎯 تارگت نهایی {key_base} زده شد و پوزیشن بسته شد.")
+                            state["targets"].pop(pos_id, None)
+                            closed_now = True
+                        break
+                    if not reason: break
+                    payload_sl = max(cur_sl, new_sl) if is_long else (min(cur_sl, new_sl) if cur_sl > 0 else new_sl)
+                    if abs(cur_sl - payload_sl) > 1e-6:
+                        if patch_tpsl(state, pos_id, payload_sl, t.get("tp5", cur_tp)):
+                            cur_sl = payload_sl
+                            t["current_stage"] = stage
+                        else:
+                            break 
+                    else:
+                        t["current_stage"] = stage
 
-            stage_txt, path_txt = AUTO_STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
-            target = t.get("tp5", cur_tp)
-            if t["current_stage"] == 0: target = t.get("tp2", cur_tp)
-            elif t["current_stage"] == 1: target = t.get("tp3", cur_tp)
-            elif t["current_stage"] == 2: target = t.get("tp4", cur_tp)
+                if closed_now: continue
+
+                stage_txt, path_txt = AUTO_STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
+                target = t.get("tp5", cur_tp)
+                if t["current_stage"] == 0: target = t.get("tp2", cur_tp)
+                elif t["current_stage"] == 1: target = t.get("tp3", cur_tp)
+                elif t["current_stage"] == 2: target = t.get("tp4", cur_tp)
+                
+                bar = get_progress_bar(price, entry, target)
+                emoji = "🟢" if roi >= 0 else "🔴"
+                card = f"{emoji} <b>{key_base}</b> | 🤖 خودکار\n"
+                card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
+                card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+                card += f"📌 وضعیت: {stage_txt}\n"
+                if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
+                card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
+                if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
+                continue
+
+            if not is_isolated:
+                manual_pnl += pnl; manual_margin += margin
+                
+            price_10 = entry + ((margin * 0.10) / size if is_long else -(margin * 0.10) / size)
+            
+            sl0 = t["sl"]
+            if cur_sl == 0 or (t["current_stage"] == 0 and (cur_sl < sl0 - tol if is_long else cur_sl > sl0 + tol)):
+                restore = sl0 if t["current_stage"] == 0 else (price_10 if t["current_stage"] >= 2 else entry)
+                if patch_tpsl(state, pos_id, restore, cur_tp): cur_sl = restore
+
+            stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99), is_isolated)
+            if reason:
+                final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
+                is_behind = (is_long and final_sl >= price) or (not is_long and final_sl <= price)
+                if not is_behind:
+                    if abs(final_sl - cur_sl) > 1e-6 or abs(new_tp - cur_tp) > 1e-6:
+                        if patch_tpsl(state, pos_id, final_sl, new_tp): 
+                            cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
+                    else:
+                        t["current_stage"] = stage
+                else:
+                    report_error(state, f"behind_{pos_id}", "استاپ پشت قیمت", f"{key_base}: قیمت {price} از استاپ جدید {final_sl} رد شده.", "🟡")
+
+            stage_txt, path_txt = STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
+            target = t.get("tp4", cur_tp)
+            if t["current_stage"] < 5: target = t.get("tp1", cur_tp)
+            elif t["current_stage"] < 7: target = t.get("tp2", cur_tp)
+            elif t["current_stage"] < 9: target = t.get("tp3", cur_tp)
             
             bar = get_progress_bar(price, entry, target)
             emoji = "🟢" if roi >= 0 else "🔴"
-            card = f"{emoji} <b>{key_base}</b> | 🤖 خودکار\n"
+            
+            icon = "🔒" if is_isolated else "⚙️"
+            card = f"{emoji} <b>{key_base}</b> | {icon}\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
             card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
             card += f"📌 وضعیت: {stage_txt}\n"
             if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
             card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
-            if len("\n".join(auto_parts)) + len(card) < 3500: auto_parts.append(card)
+            if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
             continue
 
-        if not is_isolated:
-            manual_pnl += pnl; manual_margin += margin
+        # 👇 پردازش پوزیشن‌های کاستوم (Custom)
+        if key_base in state["custom_positions"]:
+            c = state["custom_positions"][key_base]
+            price = float(pos.get("markPrice") or 0)
+            cur_sl = float(pos.get("stopLoss") or 0)
+            cur_tp = float(pos.get("takeProfit") or 0)
+            pnl = float(pos.get("unrealizedPnL") or 0)
+            is_long = (side == "LONG")
+            g = 1 if is_long else -1
+            entry = c["entry"]
             
-        price_10 = entry + ((margin * 0.10) / size if is_long else -(margin * 0.10) / size)
-        
-        sl0 = t["sl"]
-        if cur_sl == 0 or (t["current_stage"] == 0 and (cur_sl < sl0 - tol if is_long else cur_sl > sl0 + tol)):
-            restore = sl0 if t["current_stage"] == 0 else (price_10 if t["current_stage"] >= 2 else entry)
-            if patch_tpsl(state, pos_id, restore, cur_tp): cur_sl = restore
+            dist1 = abs(c["tp1"] - entry)
+            p93 = entry + g * dist1 * 0.93
+            p85 = entry + g * dist1 * 0.85
+            tp13 = c["tp1"] + g * abs(c["tp2"] - c["tp1"]) * 0.3
+            tp15 = c["tp1"] + g * abs(c["tp2"] - c["tp1"]) * 0.5
+            tp25 = c["tp2"] + g * abs(c["tp3"] - c["tp2"]) * 0.5
+            tp35 = c["tp3"] + g * abs(c["tp4"] - c["tp3"]) * 0.5
+            
+            def hit(lvl): return price >= lvl if is_long else price <= lvl
+            
+            stage = c.get("stage", 0)
+            new_sl = cur_sl
+            new_tp = cur_tp
+            changed = False
+            reason = ""
 
-        stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99), is_isolated)
-        if reason:
-            final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
-            is_behind = (is_long and final_sl >= price) or (not is_long and final_sl <= price)
-            if not is_behind:
-                if abs(final_sl - cur_sl) > 1e-6 or abs(new_tp - cur_tp) > 1e-6:
-                    if patch_tpsl(state, pos_id, final_sl, new_tp): 
-                        cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
-                else:
-                    t["current_stage"] = stage
-            else:
-                # 👇 اضافه شدن لاگ برای شرط is_behind
-                report_error(state, f"behind_{pos_id}", "استاپ پشت قیمت", f"{key_base}: قیمت {price} از استاپ جدید {final_sl} رد شده.", "🟡")
+            if stage == 0 and hit(p93):
+                new_sl = p85; new_tp = c["tp4"]; stage = 1; changed = True; reason = "قفل ۸۵٪ مسیر TP1 و انتقال تارگت به TP4"
+            elif stage == 1 and hit(tp13):
+                new_sl = c["tp1"]; stage = 2; changed = True; reason = "استاپ روی TP1"
+            elif stage == 2 and hit(c["tp2"]):
+                new_sl = tp15; stage = 3; changed = True; reason = "استاپ روی TP1.5"
+            elif stage == 3 and hit(tp25):
+                new_sl = c["tp2"]; stage = 4; changed = True; reason = "استاپ روی TP2"
+            elif stage == 4 and hit(c["tp3"]):
+                new_sl = tp25; stage = 5; changed = True; reason = "استاپ روی TP2.5"
+            elif stage == 5 and hit(tp35):
+                new_sl = c["tp3"]; stage = 6; changed = True; reason = "استاپ روی TP3"
+            elif stage == 6 and hit(c["tp4"]):
+                if close_position_market(state, pos_id):
+                    notify(f"🎯 تارگت نهایی کاستوم {key_base} زده شد و پوزیشن بسته شد.")
+                    state["custom_positions"].pop(key_base, None)
+                continue
 
-        stage_txt, path_txt = STAGE_TEXT.get(t["current_stage"], ("در حال مدیریت", ""))
-        target = t.get("tp4", cur_tp)
-        if t["current_stage"] < 5: target = t.get("tp1", cur_tp)
-        elif t["current_stage"] < 7: target = t.get("tp2", cur_tp)
-        elif t["current_stage"] < 9: target = t.get("tp3", cur_tp)
-        
-        bar = get_progress_bar(price, entry, target)
-        emoji = "🟢" if roi >= 0 else "🔴"
-        
-        icon = "🔒" if is_isolated else "⚙️"
-        card = f"{emoji} <b>{key_base}</b> | {icon}\n"
-        card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
-        card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
-        card += f"📌 وضعیت: {stage_txt}\n"
-        if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
-        card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
-        if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
+            if changed:
+                if patch_tpsl(state, pos_id, new_sl, new_tp):
+                    c["stage"] = stage
+                    cur_sl = new_sl
+                    notify(f"⚙️ مدیریت کاستوم {key_base}: {reason}")
 
+            stage_txt = CUSTOM_STAGE_TEXT.get(c["stage"], ("در حال مدیریت", ""))
+            emoji = "🟢" if pnl >= 0 else "🔴"
+            card = f"{emoji} <b>{key_base}</b> | ⚙️ کاستوم\n"
+            card += f"💵 سود شناور: <code>{pnl:+.2f} USDT</code>\n"
+            card += f"🛑 استاپ فعلی: <code>{cur_sl:.4f}</code>\n"
+            card += f"📌 وضعیت: {stage_txt[0]}\n"
+            card += f"⏳ در مسیر: {stage_txt[1]}\n"
+            if len("\n".join(custom_parts)) + len(card) < 3500: custom_parts.append(card)
+            continue
+
+        # 👇 پردازش پوزیشن‌های دستی (Manual)
+        if key_base in state["manual_positions"]:
+            m = state["manual_positions"][key_base]
+            pnl = float(pos.get("unrealizedPnL") or 0)
+            margin = float(pos.get("initialMargin") or 0)
+            
+            manual_pnl += pnl
+            manual_margin += margin
+            
+            emoji = "🟢" if pnl >= 0 else "🔴"
+            card = f"{emoji} <b>{key_base}</b> | 👁️ دستی\n"
+            card += f"💵 سود شناور: <code>{pnl:+.2f} USDT</code>\n"
+            card += f"💼 مارجین: <code>{margin:.2f} USDT</code>\n"
+            if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
+            continue
+
+        # اگر نه سیگنالی بود نه دستی نه کاستوم
+        manual_unmanaged.append(key_base)
+
+    # 👇 بررسی بسته شدن پوزیشن‌ها
     for key in list(state["targets"].keys()):
         if key in open_keys or state["targets"][key].get("closed"): continue
         match = [p for p in closed_positions if str(p.get("id")) == key]
@@ -851,7 +967,6 @@ def manage_positions(state):
             tg["missing"] = tg.get("missing", 0) + 1
             if tg["missing"] >= MISSING_LIMIT:
                 notify(f"🧹 پوزیشن {tg.get('symbol')}_{tg.get('side')} مدت‌هاست در صرافی پیدا نمی‌شود؛ از مدیریت حذف شد.")
-                # 👇 FIX 5: پاک کردن خطاهای مربوطه
                 resolve_error(state, f"patch_{key}"); resolve_error(state, f"close_{key}")
                 resolve_error(state, f"mark_{key}"); resolve_error(state, f"behind_{key}")
                 del state["targets"][key]
@@ -875,63 +990,64 @@ def manage_positions(state):
         msg += f"سود/ضرر: <code>{pnl:+.2f} USDT</code> {emoji}"
         
         notify(msg)
-        # 👇 FIX 5: پاک کردن خطاهای مربوطه
         resolve_error(state, f"patch_{key}"); resolve_error(state, f"close_{key}")
         resolve_error(state, f"mark_{key}"); resolve_error(state, f"behind_{key}")
         del state["targets"][key]
+
+    # پاکسازی کامندهای دستی و کاستوم بسته شده
+    for d_key, d_val in [("manual_positions", "دستی"), ("custom_positions", "کاستوم")]:
+        for k in list(state[d_key].keys()):
+            if k not in [f"{p['symbol'].replace('USDT', '')}_{p['side']}" for p in open_positions]:
+                notify(f"🏁 پوزیشن {d_val} {k} بسته شد و از لیست خارج شد.")
+                del state[d_key][k]
 
     if manual_margin > 0:
         non_isolated_positions = [t for t in state["targets"].values() if not t.get("is_auto") and not t.get("is_isolated")]
         target_pct = get_dynamic_tp_percent(len(non_isolated_positions))
         
         if manual_pnl >= (manual_margin * target_pct / 100.0):
-            notify(f"🚀 هدف سود کل (دستی) پر شد ({target_pct}%). در حال بستن...")
+            notify(f"🚀 هدف سود کل (سبد شامل دستی‌ها) پر شد ({target_pct}%). در حال بستن...")
             for pos in open_positions:
                 pid = str(pos["id"])
                 p_t = state["targets"].get(pid)
-                if not p_t: continue
-                if not p_t.get("is_auto") and not p_t.get("is_isolated"):
+                if p_t and not p_t.get("is_auto") and not p_t.get("is_isolated"):
                     if close_position_market(state, pid):
                         notify(f"🏁 {pos['symbol'].replace('USDT', '')}_{pos['side']} بسته شد (هدف سبد): <code>{float(pos.get('unrealizedPnL') or 0):+.2f} USDT</code>")
-                        # 👇 FIX 5: پاک کردن خطاهای مربوطه
                         resolve_error(state, f"patch_{pid}"); resolve_error(state, f"close_{pid}")
                         resolve_error(state, f"mark_{pid}"); resolve_error(state, f"behind_{pid}")
                         state["targets"].pop(pid, None)
             return 
 
-    if not manual_parts[1:]: manual_parts.append("پوزیشن دستی باز نیست.")
+    if not manual_parts[1:]: manual_parts.append("پوزیشن دستی یا سیگنال باز نیست.")
     else: manual_parts.insert(1, f"📈 سود کل (سبد): <code>{manual_pnl:+.2f} USDT</code>")
     
     if manual_unmanaged: 
         unmanaged_str = ', '.join(manual_unmanaged[:5])
         if len(manual_unmanaged) > 5: unmanaged_str += f" + {len(manual_unmanaged)-5} more"
-        manual_parts.append(f"⚠️ بدون سیگنال: {unmanaged_str}")
+        manual_parts.append(f"⚠️ بدون سیگنال (رها): {unmanaged_str}")
 
     if state.get("limit_orders"):
         for tag, o in state["limit_orders"].items():
             auto_parts.append(f"⏳ لیمیت در انتظار {o['symbol']} | {tag}\nقیمت: {o['entry']}")
         
     if not auto_parts[1:]: auto_parts.append("پوزیشن خودکار باز نیست.")
+    if not custom_parts[1:]: custom_parts.append("پوزیشن کاستوم باز نیست.")
 
     now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3, minutes=30)
     time_str = now.strftime('%H:%M:%S')
     manual_parts.append(f"\n🕒 <b>آخرین آپدیت:</b> {time_str}")
     auto_parts.append(f"\n🕒 <b>آخرین آپدیت:</b> {time_str}")
+    custom_parts.append(f"\n🕒 <b>آخرین آپدیت:</b> {time_str}")
 
-    m_text = "\n".join(manual_parts)
-    if state.get("dashboard_id"):
-        if not edit_telegram(state["dashboard_id"], m_text):
-            state["dashboard_id"] = send_telegram(m_text)
-    else:
-        state["dashboard_id"] = send_telegram(m_text)
-
-    a_text = "\n".join(auto_parts)
-    if state.get("auto_dashboard_id"):
-        if not edit_telegram(state["auto_dashboard_id"], a_text):
-            state["auto_dashboard_id"] = send_telegram(a_text)
-    else:
-        state["auto_dashboard_id"] = send_telegram(a_text)
-        
+    # آپدیت هر سه داشبورد
+    for part_key, text_parts in [("dashboard_id", manual_parts), ("auto_dashboard_id", auto_parts), ("custom_dashboard_id", custom_parts)]:
+        text = "\n".join(text_parts)
+        if state.get(part_key):
+            if not edit_telegram(state[part_key], text):
+                state[part_key] = send_telegram(text)
+        else:
+            state[part_key] = send_telegram(text)
+            
     render_check_engine(state)
 
 def run():
