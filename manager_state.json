@@ -11,21 +11,6 @@
     "day": "2026-11-21",
     "day_balance": 123.63524686672831,
     "manual_positions": {},
-    "custom_positions": {
-        "SOL_SHORT": {
-            "symbol": "SOL",
-            "side": "SHORT",
-            "entry": 67.86,
-            "margin": 10.93,
-            "leverage": 15.0,
-            "sl": 72.39,
-            "tp1": 63.3,
-            "tp2": 58.75,
-            "tp3": 54.2,
-            "tp4": 49.65,
-            "stage": 0,
-            "created": 1795210863.7235227
-        }
-    },
+    "custom_positions": {},
     "custom_dashboard_id": 874
 }
