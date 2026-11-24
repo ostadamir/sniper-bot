@@ -16,7 +16,7 @@ API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
 CHANNEL_ID = -1004400244481
-MAX_AGE_SEC = 420  # ۷ دقیقه
+MAX_AGE_SEC = 7200  # 👈 فیکس شد: ۲ ساعت (تا اگر گیت‌هاب تاخیر داشت سیگنال از دست نره)
 
 PROCESSED_FILE = "processed_signals.json"
 QUEUE_FILE = "pending_signals.txt"
@@ -128,6 +128,7 @@ def run_listener():
                 text = msg.raw_text
                 text_upper = text.upper()
                 current_tag = find_tag(text_upper)
+                is_limit = "LIMIT" in text_upper # 👈 فیکس شد: این متغیر تعریف نشده بود
                 
                 # کنسل کردن لیمیت‌ها
                 if current_tag and any(k in text for k in CANCEL_KEYWORDS):
