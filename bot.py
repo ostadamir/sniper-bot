@@ -303,7 +303,7 @@ def new_state(): return {
     "targets": {}, "pending": {}, "limit_orders": {}, "queue_retries": {}, "offset": 0, 
     "dashboard_id": None, "auto_dashboard_id": None, "check_engine_id": None, 
     "active_errors": {}, "day": None, "day_balance": 0.0,
-    "manual_positions": {}, "custom_positions": {} # لیست‌های جدید
+    "manual_positions": {}, "custom_positions": {}
 }
 
 def load_state():
@@ -645,7 +645,7 @@ def next_auto_stage(t, is_long, entry, price):
         new_sl = t["tp1"] - (g * dist * 0.2)
         return 2, new_sl, "TP3 (قفل ۸۰٪ مسیر TP1)"
     elif t["current_stage"] == 2 and hit(t["tp4"]): 
-        return 3, t["tp1"], "TP4 (قفل TP1)" # 👈 تغییر یافته به TP1
+        return 3, t["tp1"], "TP4 (قفل TP1)" 
     elif t["current_stage"] == 3 and hit(t["tp5"]): 
         return 4, t["tp4"], "TP5 (کلوز)"
     return t["current_stage"], 0, ""
@@ -669,7 +669,7 @@ AUTO_STAGE_TEXT = {
     0: ("منتظر TP2", "TP2"),
     1: ("✅ TP2 زده شد (قفل ۸۰٪ ریسک)", "TP3"),
     2: ("✅ TP3 زده شد (قفل ۸۰٪ TP1)", "TP4"),
-    3: ("✅ TP4 زده شد (قفل TP1)", "TP5 (کلوز)"), # 👈 تغییر یافته
+    3: ("✅ TP4 زده شد (قفل TP1)", "TP5 (کلوز)"),
     4: ("✅ TP5 (کلوز)", "") 
 }
 
@@ -877,9 +877,19 @@ def manage_positions(state):
             if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
             continue
 
-        # 👇 پردازش پوزیشن‌های کاستوم (Custom)
-        if key_base in state["custom_positions"]:
-            c = state["custom_positions"][key_base]
+        # 👇 پردازش پوزیشن‌های کاستوم (Custom) - با مچ کردن دقیق
+        matched_custom_key = None
+        for ck, cv in state["custom_positions"].items():
+            if cv["symbol"] == symbol and cv["side"] == side:
+                p_entry = float(pos.get("entryPrice") or 0)
+                p_margin = float(pos.get("initialMargin") or 0)
+                p_lev = float(pos.get("leverage") or 0)
+                if abs(p_entry - cv["entry"]) / cv["entry"] < 0.005 and abs(p_margin - cv["margin"]) < 1.0 and p_lev == cv["leverage"]:
+                    matched_custom_key = ck
+                    break
+                    
+        if matched_custom_key:
+            c = state["custom_positions"][matched_custom_key]
             price = float(pos.get("markPrice") or 0)
             cur_sl = float(pos.get("stopLoss") or 0)
             cur_tp = float(pos.get("takeProfit") or 0)
@@ -919,7 +929,7 @@ def manage_positions(state):
             elif stage == 6 and hit(c["tp4"]):
                 if close_position_market(state, pos_id):
                     notify(f"🎯 تارگت نهایی کاستوم {key_base} زده شد و پوزیشن بسته شد.")
-                    state["custom_positions"].pop(key_base, None)
+                    state["custom_positions"].pop(matched_custom_key, None)
                 continue
 
             if changed:
@@ -938,9 +948,19 @@ def manage_positions(state):
             if len("\n".join(custom_parts)) + len(card) < 3500: custom_parts.append(card)
             continue
 
-        # 👇 پردازش پوزیشن‌های دستی (Manual)
-        if key_base in state["manual_positions"]:
-            m = state["manual_positions"][key_base]
+        # 👇 پردازش پوزیشن‌های دستی (Manual) - با مچ کردن دقیق
+        matched_manual_key = None
+        for mk, mv in state["manual_positions"].items():
+            if mv["symbol"] == symbol and mv["side"] == side:
+                p_entry = float(pos.get("entryPrice") or 0)
+                p_margin = float(pos.get("initialMargin") or 0)
+                p_lev = float(pos.get("leverage") or 0)
+                if abs(p_entry - mv["entry"]) / mv["entry"] < 0.005 and abs(p_margin - mv["margin"]) < 1.0 and p_lev == mv["leverage"]:
+                    matched_manual_key = mk
+                    break
+
+        if matched_manual_key:
+            m = state["manual_positions"][matched_manual_key]
             pnl = float(pos.get("unrealizedPnL") or 0)
             margin = float(pos.get("initialMargin") or 0)
             
