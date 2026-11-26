@@ -21,8 +21,8 @@ PORTFOLIO_TP_PERCENT_5 = 4.0
 PORTFOLIO_TP_PERCENT_DEFAULT = 10.0
 
 MAX_AUTO_POSITIONS = 2
-AUTO_MARGIN_PERCENT = 7.0
-AUTO_LEVERAGE = 20
+AUTO_MARGIN_PERCENT = 12.0
+AUTO_LEVERAGE = 30
 MAX_ENTRY_DEV = 0.01
 MIN_TP_DIST = 0.003      
 MIN_SL_DIST = 0.001      
@@ -754,6 +754,29 @@ def manage_positions(state):
     for pos in open_positions:
         pos_id = str(pos["id"]); symbol = pos["symbol"].replace("USDT", ""); side = pos["side"]; key_base = f"{symbol}_{side}"
 
+        # =====================================================================
+        # 👇 منطق جدید: ریسک فری خودکار روی 0.9 درصد حرکت قیمت (برای همه) 👇
+        # =====================================================================
+        price = float(pos.get("markPrice") or 0)
+        entry = float(pos.get("entryPrice") or 0)
+        cur_sl = float(pos.get("stopLoss") or 0)
+        cur_tp = float(pos.get("takeProfit") or 0)
+        is_long = (side == "LONG")
+
+        if entry > 0 and price > 0:
+            price_move_pct = abs(price - entry) / entry * 100
+            if price_move_pct >= 0.9:
+                # چک میکنیم آیا کاربر خودش استاپ رو بهتر از ورود کرده یا نه
+                # برای LONG اگر استاپ بالای ورود باشه، یا برای SHORT اگر استاپ زیر ورود باشه
+                is_sl_better = (is_long and cur_sl >= entry) or (not is_long and cur_sl <= entry and cur_sl > 0)
+                
+                if not is_sl_better and abs(cur_sl - entry) > 1e-6:
+                    if patch_tpsl(state, pos_id, entry, cur_tp if cur_tp > 0 else 0):
+                        notify(f"🛡️ ریسک‌فری خودکار {key_base}: قیمت ۰.۹٪ حرکت کرد، استاپ روی نقطه ورود ({entry}) قرار گرفت.")
+                        cur_sl = entry
+                        pos["stopLoss"] = str(entry)
+        # =====================================================================
+
         # 👇 پردازش پوزیشن‌های خودکار و سیگنالی
         if pos_id in state["targets"]:
             t = state["targets"][pos_id]
@@ -762,6 +785,7 @@ def manage_positions(state):
             
             is_auto = t.get("is_auto", False)
             is_isolated = t.get("is_isolated", False)
+            # قیمت و استاپ رو دوباره می‌خونیم چون ممکنه تو بلاک بالا آپدیت شده باشن
             price = float(pos.get("markPrice") or 0)
             cur_sl = float(pos.get("stopLoss") or 0)
             cur_tp = float(pos.get("takeProfit") or 0)
