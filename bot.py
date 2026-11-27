@@ -303,7 +303,7 @@ def new_state(): return {
     "targets": {}, "pending": {}, "limit_orders": {}, "queue_retries": {}, "offset": 0, 
     "dashboard_id": None, "auto_dashboard_id": None, "check_engine_id": None, 
     "active_errors": {}, "day": None, "day_balance": 0.0,
-    "manual_positions": {}, "custom_positions": {}
+    "manual_positions": {}, "custom_positions": {}, "rf_done": {}
 }
 
 def load_state():
@@ -649,8 +649,9 @@ STAGE_TEXT = {
 }
 
 AUTO_STAGE_TEXT = {
-    0: ("منتظر ریسک‌فری (۰.۹٪)", "ریسک‌فری"),
-    1: ("✅ ریسک‌فری شد (منتظر TP نهایی)", "TP نهایی"),
+    0: ("منتظر ریسک‌فری (۰.۸۵٪)", "ریسک‌فری"),
+    1: ("✅ ریسک‌فری شد (منتظر TP4)", "TP4"),
+    2: ("✅ TP4 زده شد، استاپ روی TP1 قفل شد", "TP نهایی"),
 }
 
 CUSTOM_STAGE_TEXT = {
@@ -734,32 +735,34 @@ def manage_positions(state):
     for pos in open_positions:
         pos_id = str(pos["id"]); symbol = pos["symbol"].replace("USDT", ""); side = pos["side"]; key_base = f"{symbol}_{side}"
 
-        # =====================================================================
-        # 👇 منطق جدید و اصلاح شده: ریسک فری روی 0.9 درصد حرکت به نفع پوزیشن 👇
-        # =====================================================================
         price = float(pos.get("markPrice") or 0)
         entry = float(pos.get("entryPrice") or 0)
         cur_sl = float(pos.get("stopLoss") or 0)
         cur_tp = float(pos.get("takeProfit") or 0)
         is_long = (side == "LONG")
 
-        if entry > 0 and price > 0:
-            if is_long: price_move_pct = (price - entry) / entry * 100
-            else: price_move_pct = (entry - price) / entry * 100
-
-            if price_move_pct >= 0.75:
-                is_sl_better = (is_long and cur_sl >= entry) or (not is_long and cur_sl <= entry and cur_sl > 0)
-                
-                if not is_sl_better and abs(cur_sl - entry) > 1e-6:
-                    if patch_tpsl(state, pos_id, entry, cur_tp if cur_tp > 0 else 0):
-                        notify(f"🛡️ ریسک‌فری خودکار {key_base}: قیمت ۰.۷۵٪ به نفع پوزیشن حرکت کرد، استاپ روی نقطه ورود ({entry}) قرار گرفت.")
-                        cur_sl = entry
-                        pos["stopLoss"] = str(entry)
-                        if pos_id in state["targets"] and state["targets"][pos_id].get("is_auto"):
-                            state["targets"][pos_id]["current_stage"] = 1 # 👈 مارک میکنیم که ریسک فری شده
+        # =====================================================================
+        # 👇 ریسک‌فری برای همه پوزیشن‌ها (۰.۸۵٪ حرکت به نفع پوزیشن، یک‌بار برای هر پوزیشن)
+        # =====================================================================
+        rf = state.setdefault("rf_done", {})
+        if entry > 0 and price > 0 and pos_id not in rf:
+            move = ((price - entry) if is_long else (entry - price)) / entry * 100
+            if move >= 0.85:
+                be = entry * (1.0012 if is_long else 0.9988)  # پوشش کارمزد
+                better = (is_long and cur_sl >= be) or (not is_long and 0 < cur_sl <= be)
+                if better:
+                    rf[pos_id] = True
+                elif patch_tpsl(state, pos_id, be, cur_tp if cur_tp > 0 else 0):
+                    rf[pos_id] = True
+                    cur_sl = be
+                    pos["stopLoss"] = str(be)
+                    t_rf = state["targets"].get(pos_id)
+                    if t_rf and t_rf.get("is_auto") and t_rf.get("current_stage", 0) < 1:
+                        t_rf["current_stage"] = 1
+                    notify(f"🛡️ ریسک‌فری {key_base}: قیمت ۰.۸۵٪ به نفع پوزیشن رفت، استاپ روی {fmt_num(be)} (ورود + بافر کارمزد)")
         # =====================================================================
 
-        # 👇 پردازش پوزیشن‌های خودکار (فقط برای نمایش در داشبورد)
+        # 👇 پردازش پوزیشن‌های خودکار
         if pos_id in state["targets"]:
             t = state["targets"][pos_id]
             if not t or t.get("closed", False): continue
@@ -777,7 +780,20 @@ def manage_positions(state):
             roi = (pnl / margin) * 100
 
             if is_auto:
-                # 👈 اینجا دیگه هیچ جابجایی استاپی (پله ای) انجام نمیشه. فقط نمایش!
+                # 👇 رسیدن به TP4: استاپ روی TP1 قفل می‌شود (فقط یک بار)
+                tp4_lvl = t.get("tp4")
+                tp1_lvl = t.get("tp1")
+                if tp4_lvl and tp1_lvl and t.get("current_stage", 0) < 2:
+                    reached_tp4 = (price >= tp4_lvl) if is_long else (price <= tp4_lvl)
+                    if reached_tp4:
+                        sl_ok = (is_long and cur_sl >= tp1_lvl) or (not is_long and 0 < cur_sl <= tp1_lvl)
+                        if sl_ok:
+                            t["current_stage"] = 2
+                        elif patch_tpsl(state, pos_id, tp1_lvl, cur_tp if cur_tp > 0 else 0):
+                            t["current_stage"] = 2
+                            cur_sl = tp1_lvl
+                            notify(f"🔐 {key_base}: TP4 زده شد، استاپ روی TP1 ({fmt_num(tp1_lvl)}) قفل شد.")
+
                 stage_txt, path_txt = AUTO_STAGE_TEXT.get(t.get("current_stage", 0), ("در حال مدیریت", ""))
                 target = t.get("tp5", cur_tp)
                 
@@ -928,6 +944,11 @@ def manage_positions(state):
             continue
 
         manual_unmanaged.append(key_base)
+
+    # 👇 پاکسازی علامت ریسک‌فری پوزیشن‌های بسته‌شده
+    for k in list(state.get("rf_done", {}).keys()):
+        if k not in open_keys:
+            del state["rf_done"][k]
 
     # 👇 بررسی بسته شدن پوزیشن‌ها
     for key in list(state["targets"].keys()):
