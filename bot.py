@@ -40,7 +40,8 @@ USAGE = ("فرمت دستورات:\n"
          "پوزیشن کاستوم (مدیریت استاپ خاص): /custom SYMBOL SIDE ENTRY MARGIN LEVERAGE SL TP1 TP2 TP3 TP4\n"
          "لغو سیگنال: /cancel SYMBOL SIDE\n"
          "لغو لیمیت: /cancel_limit #TAG\n"
-         "رهاسازی پوزیشن: /release SYMBOL SIDE")
+         "رهاسازی پوزیشن: /release SYMBOL SIDE\n"
+         "برگرداندن مدیریت استاپ به ربات: /resume SYMBOL SIDE")
 
 def _norm(x): return str(x or "").strip().lower()
 def strip_tags(t): return html.unescape(re.sub(r"<[^>]+>", "", str(t)))
@@ -160,6 +161,47 @@ def patch_tpsl(state, pos_id, sl_value, tp_value):
             report_error(state, err_key, "خطای تغییر استاپ/تارگت", str(e)[:100], "🔴")
         time.sleep(2)
     return False
+
+# ===== تشخیص تغییر دستی استاپ توسط کاربر =====
+def detect_user_sl(state, pos_id, key_base, cur_sl, price):
+    """اگر استاپ در صرافی با آخرین مقداری که ربات می‌دانسته فرق کند، یعنی کاربر دستی تغییر داده؛
+    از آن لحظه ربات دیگر استاپ/تارگت آن پوزیشن را تغییر نمی‌دهد."""
+    track = state.setdefault("sl_track", {})
+    user = state.setdefault("sl_user", {})
+    if pos_id in user:
+        return True
+    tr = track.get(pos_id)
+    if tr is None:
+        track[pos_id] = {"v": cur_sl, "fresh": False}
+        return False
+    if tr.get("fresh"):
+        tr["v"] = cur_sl; tr["fresh"] = False
+        return False
+    tol = max(1e-8, price * 2e-4)
+    if abs(cur_sl - tr["v"]) > tol:
+        user[pos_id] = key_base
+        notify(f"✋ {key_base}: استاپ را دستی تغییر دادی. از این لحظه ربات دیگر استاپ/تارگت این پوزیشن را تغییر نمی‌دهد. (برگرداندن به ربات: /resume {key_base.replace('_', ' ')})")
+        return True
+    return False
+
+def safe_patch(state, pos_id, sl_value, tp_value):
+    if pos_id in state.get("sl_user", {}):
+        return False
+    ok = patch_tpsl(state, pos_id, sl_value, tp_value)
+    if ok:
+        state.setdefault("sl_track", {})[pos_id] = {"v": sl_value, "fresh": True}
+    return ok
+
+def handle_resume(state, parts):
+    if len(parts) < 3: return
+    key = f"{parts[1].upper().replace('USDT', '')}_{parts[2].upper()}"
+    found = False
+    for pid in list(state.get("sl_user", {}).keys()):
+        if state["sl_user"][pid] == key:
+            del state["sl_user"][pid]
+            state.get("sl_track", {}).pop(pid, None)
+            found = True
+    notify(f"🔁 مدیریت استاپ {key} به ربات برگشت." if found else f"ℹ️ برای {key} قفل دستی فعال نبود.")
 
 def close_position_market(state, pos_id):
     st, res = tt_request("POST", f"/futures/positions/{pos_id}/close", payload={"type": "MARKET"})
@@ -303,7 +345,8 @@ def new_state(): return {
     "targets": {}, "pending": {}, "limit_orders": {}, "queue_retries": {}, "offset": 0, 
     "dashboard_id": None, "auto_dashboard_id": None, "check_engine_id": None, 
     "active_errors": {}, "day": None, "day_balance": 0.0,
-    "manual_positions": {}, "custom_positions": {}, "rf_done": {}
+    "manual_positions": {}, "custom_positions": {}, "rf_done": {},
+    "sl_track": {}, "sl_user": {}
 }
 
 def load_state():
@@ -594,6 +637,7 @@ def check_telegram(state):
                     elif cmd == "/manual": handle_manual(state, parts)
                     elif cmd == "/custom": handle_custom(state, parts)
                     elif cmd == "/release": handle_release(state, parts)
+                    elif cmd == "/resume": handle_resume(state, parts)
                     elif cmd == "/balance":
                         bal = get_futures_balance(state)
                         notify(f"💰 موجودی: {bal[0]:.2f}$ (آزاد: {bal[1]:.2f}$)" if bal else "⚠️ خطا")
@@ -649,7 +693,7 @@ STAGE_TEXT = {
 }
 
 AUTO_STAGE_TEXT = {
-    0: ("منتظر ریسک‌فری (۰.۸۵٪)", "ریسک‌فری"),
+    0: ("منتظر ریسک‌فری (۰.۷۰٪)", "ریسک‌فری"),
     1: ("✅ ریسک‌فری شد (منتظر TP4)", "TP4"),
     2: ("✅ TP4 زده شد، استاپ روی TP1 قفل شد", "TP نهایی"),
 }
@@ -741,25 +785,29 @@ def manage_positions(state):
         cur_tp = float(pos.get("takeProfit") or 0)
         is_long = (side == "LONG")
 
+        # 👇 اگر کاربر استاپ را دستی عوض کرده باشد، ربات دیگر دست نمی‌زند
+        locked = detect_user_sl(state, pos_id, key_base, cur_sl, price)
+        lock_line = "✋ استاپ دستی؛ ربات دست نمی‌زند\n" if locked else ""
+
         # =====================================================================
-        # 👇 ریسک‌فری برای همه پوزیشن‌ها (۰.۸۵٪ حرکت به نفع پوزیشن، یک‌بار برای هر پوزیشن)
+        # 👇 ریسک‌فری برای همه پوزیشن‌ها (۰.۷۰٪ حرکت به نفع پوزیشن، یک‌بار برای هر پوزیشن)
         # =====================================================================
         rf = state.setdefault("rf_done", {})
-        if entry > 0 and price > 0 and pos_id not in rf:
+        if not locked and entry > 0 and price > 0 and pos_id not in rf:
             move = ((price - entry) if is_long else (entry - price)) / entry * 100
-            if move >= 0.85:
+            if move >= 0.70:
                 be = entry * (1.0012 if is_long else 0.9988)  # پوشش کارمزد
                 better = (is_long and cur_sl >= be) or (not is_long and 0 < cur_sl <= be)
                 if better:
                     rf[pos_id] = True
-                elif patch_tpsl(state, pos_id, be, cur_tp if cur_tp > 0 else 0):
+                elif safe_patch(state, pos_id, be, cur_tp if cur_tp > 0 else 0):
                     rf[pos_id] = True
                     cur_sl = be
                     pos["stopLoss"] = str(be)
                     t_rf = state["targets"].get(pos_id)
                     if t_rf and t_rf.get("is_auto") and t_rf.get("current_stage", 0) < 1:
                         t_rf["current_stage"] = 1
-                    notify(f"🛡️ ریسک‌فری {key_base}: قیمت ۰.۸۵٪ به نفع پوزیشن رفت، استاپ روی {fmt_num(be)} (ورود + بافر کارمزد)")
+                    notify(f"🛡️ ریسک‌فری {key_base}: قیمت ۰.۷۰٪ به نفع پوزیشن رفت، استاپ روی {fmt_num(be)} (ورود + بافر کارمزد)")
         # =====================================================================
 
         # 👇 پردازش پوزیشن‌های خودکار
@@ -783,13 +831,13 @@ def manage_positions(state):
                 # 👇 رسیدن به TP4: استاپ روی TP1 قفل می‌شود (فقط یک بار)
                 tp4_lvl = t.get("tp4")
                 tp1_lvl = t.get("tp1")
-                if tp4_lvl and tp1_lvl and t.get("current_stage", 0) < 2:
+                if not locked and tp4_lvl and tp1_lvl and t.get("current_stage", 0) < 2:
                     reached_tp4 = (price >= tp4_lvl) if is_long else (price <= tp4_lvl)
                     if reached_tp4:
                         sl_ok = (is_long and cur_sl >= tp1_lvl) or (not is_long and 0 < cur_sl <= tp1_lvl)
                         if sl_ok:
                             t["current_stage"] = 2
-                        elif patch_tpsl(state, pos_id, tp1_lvl, cur_tp if cur_tp > 0 else 0):
+                        elif safe_patch(state, pos_id, tp1_lvl, cur_tp if cur_tp > 0 else 0):
                             t["current_stage"] = 2
                             cur_sl = tp1_lvl
                             notify(f"🔐 {key_base}: TP4 زده شد، استاپ روی TP1 ({fmt_num(tp1_lvl)}) قفل شد.")
@@ -802,6 +850,7 @@ def manage_positions(state):
                 card = f"{emoji} <b>{key_base}</b> | 🤖 خودکار\n"
                 card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
                 card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+                card += lock_line
                 card += f"📌 وضعیت: {stage_txt}\n"
                 if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
                 card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
@@ -815,17 +864,20 @@ def manage_positions(state):
             price_10 = entry + ((margin * 0.10) / size if is_long else -(margin * 0.10) / size)
             tol = max(1e-8, price * 1e-5)
             sl0 = t["sl"]
-            if cur_sl == 0 or (t["current_stage"] == 0 and (cur_sl < sl0 - tol if is_long else cur_sl > sl0 + tol)):
+            if not locked and (cur_sl == 0 or (t["current_stage"] == 0 and (cur_sl < sl0 - tol if is_long else cur_sl > sl0 + tol))):
                 restore = sl0 if t["current_stage"] == 0 else (price_10 if t["current_stage"] >= 2 else entry)
-                if patch_tpsl(state, pos_id, restore, cur_tp): cur_sl = restore
+                if safe_patch(state, pos_id, restore, cur_tp): cur_sl = restore
 
-            stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99), is_isolated)
+            if locked:
+                stage, new_sl, new_tp, reason = t["current_stage"], cur_sl, cur_tp, ""
+            else:
+                stage, new_sl, new_tp, reason = next_stage(t, is_long, entry, price, roi, price_10, cur_sl, cur_tp, t.get("limit_stage", 99), is_isolated)
             if reason:
                 final_sl = max(cur_sl, new_sl) if is_long else min(cur_sl, new_sl) if cur_sl > 0 else new_sl
                 is_behind = (is_long and final_sl >= price) or (not is_long and final_sl <= price)
                 if not is_behind:
                     if abs(final_sl - cur_sl) > 1e-6 or abs(new_tp - cur_tp) > 1e-6:
-                        if patch_tpsl(state, pos_id, final_sl, new_tp): 
+                        if safe_patch(state, pos_id, final_sl, new_tp): 
                             cur_sl = final_sl; t["current_stage"] = stage; t["cur_tp"] = new_tp
                     else:
                         t["current_stage"] = stage
@@ -845,6 +897,7 @@ def manage_positions(state):
             card = f"{emoji} <b>{key_base}</b> | {icon}\n"
             card += f"💵 سود: <code>{pnl:+.2f} USDT ({roi:+.1f}%)</code>\n"
             card += f"🛑 استاپ: <code>{cur_sl:.4f}</code>\n"
+            card += lock_line
             card += f"📌 وضعیت: {stage_txt}\n"
             if path_txt: card += f"⏳ در مسیر: {path_txt}\n"
             card += f"📊 پیشرفت: <code>[{bar}]</code>\n"
@@ -883,7 +936,9 @@ def manage_positions(state):
             changed = False
             reason = ""
 
-            if stage == 0 and hit(p93):
+            if locked:
+                pass
+            elif stage == 0 and hit(p93):
                 new_sl = p85; new_tp = c["tp4"]; stage = 1; changed = True; reason = "قفل ۸۵٪ مسیر TP1 و انتقال تارگت به TP4"
             elif stage == 1 and hit(tp13):
                 new_sl = c["tp1"]; stage = 2; changed = True; reason = "استاپ روی TP1"
@@ -902,7 +957,7 @@ def manage_positions(state):
                 continue
 
             if changed:
-                if patch_tpsl(state, pos_id, new_sl, new_tp):
+                if safe_patch(state, pos_id, new_sl, new_tp):
                     c["stage"] = stage
                     cur_sl = new_sl
                     notify(f"⚙️ مدیریت کاستوم {key_base}: {reason}")
@@ -912,6 +967,7 @@ def manage_positions(state):
             card = f"{emoji} <b>{key_base}</b> | ⚙️ کاستوم\n"
             card += f"💵 سود شناور: <code>{pnl:+.2f} USDT</code>\n"
             card += f"🛑 استاپ فعلی: <code>{cur_sl:.4f}</code>\n"
+            card += lock_line
             card += f"📌 وضعیت: {stage_txt[0]}\n"
             card += f"⏳ در مسیر: {stage_txt[1]}\n"
             if len("\n".join(custom_parts)) + len(card) < 3500: custom_parts.append(card)
@@ -940,15 +996,17 @@ def manage_positions(state):
             card = f"{emoji} <b>{key_base}</b> | 👁️ دستی\n"
             card += f"💵 سود شناور: <code>{pnl:+.2f} USDT</code>\n"
             card += f"💼 مارجین: <code>{margin:.2f} USDT</code>\n"
+            card += lock_line
             if len("\n".join(manual_parts)) + len(card) < 3500: manual_parts.append(card)
             continue
 
         manual_unmanaged.append(key_base)
 
     # 👇 پاکسازی علامت ریسک‌فری پوزیشن‌های بسته‌شده
-    for k in list(state.get("rf_done", {}).keys()):
-        if k not in open_keys:
-            del state["rf_done"][k]
+    for d in ("rf_done", "sl_track", "sl_user"):
+        for k in list(state.get(d, {}).keys()):
+            if k not in open_keys:
+                del state[d][k]
 
     # 👇 بررسی بسته شدن پوزیشن‌ها
     for key in list(state["targets"].keys()):
