@@ -747,7 +747,7 @@ def manage_positions(state):
             if is_long: price_move_pct = (price - entry) / entry * 100
             else: price_move_pct = (entry - price) / entry * 100
 
-            if price_move_pct >= 0.9:
+            if price_move_pct >= 0.75:
                 is_sl_better = (is_long and cur_sl >= entry) or (not is_long and cur_sl <= entry and cur_sl > 0)
                 
                 if not is_sl_better and abs(cur_sl - entry) > 1e-6:
