@@ -4,4 +4,3 @@ numpy
 requests
 Flask
 telethon
-google-generativeai
