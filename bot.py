@@ -752,7 +752,7 @@ def manage_positions(state):
                 
                 if not is_sl_better and abs(cur_sl - entry) > 1e-6:
                     if patch_tpsl(state, pos_id, entry, cur_tp if cur_tp > 0 else 0):
-                        notify(f"🛡️ ریسک‌فری خودکار {key_base}: قیمت ۰.۹٪ به نفع پوزیشن حرکت کرد، استاپ روی نقطه ورود ({entry}) قرار گرفت.")
+                        notify(f"🛡️ ریسک‌فری خودکار {key_base}: قیمت ۰.۷۵٪ به نفع پوزیشن حرکت کرد، استاپ روی نقطه ورود ({entry}) قرار گرفت.")
                         cur_sl = entry
                         pos["stopLoss"] = str(entry)
                         if pos_id in state["targets"] and state["targets"][pos_id].get("is_auto"):
