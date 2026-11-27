@@ -21,13 +21,20 @@ PORTFOLIO_TP_PERCENT_5 = 4.0
 PORTFOLIO_TP_PERCENT_DEFAULT = 10.0
 
 MAX_AUTO_POSITIONS = 2
-AUTO_MARGIN_PERCENT = 8.0
-AUTO_LEVERAGE = 20
+AUTO_MARGIN_PERCENT = 12.0
+AUTO_LEVERAGE = 30
 MAX_ENTRY_DEV = 0.01
 MIN_TP_DIST = 0.003      
 MIN_SL_DIST = 0.001      
 
 MAX_DAILY_LOSS_PERCENT = 70.0
+
+# ===== تنظیمات ریسک‌فری =====
+RF_AUTO_FRAC = 0.50       # خودکار: ۵۰٪ مسیر ورود تا TP2
+RF_MANUAL_FRAC = 0.20     # دستی/بقیه: ۲۰٪ مسیر ورود تا تارگت فعلی روی صرافی
+RF_NO_TP_RR = 3.0         # بدون تارگت: تارگت فرضی = ۳ برابر فاصله ورود تا استاپ
+RF_FALLBACK_PCT = 0.70    # اگر نه تارگت بود نه استاپ: ۰.۷۰٪ حرکت قیمت
+RF_MIN_MOVE_PCT = 0.20    # کف حرکت (تا استاپ پشت قیمت بماند و کارمزد پوشش داده شود)
 PENDING_TTL_SEC = 24 * 3600
 LIMIT_ORDER_TTL_SEC = 24 * 3600
 ERROR_TTL_SEC = 12 * 3600 
@@ -161,6 +168,28 @@ def patch_tpsl(state, pos_id, sl_value, tp_value):
             report_error(state, err_key, "خطای تغییر استاپ/تارگت", str(e)[:100], "🔴")
         time.sleep(2)
     return False
+
+def rf_trigger_price(state, pos_id, entry, is_long, cur_tp, cur_sl=0):
+    """قیمتی که با رسیدن به آن، ریسک‌فری انجام می‌شود.
+    خودکار: ۵۰٪ مسیر تا TP2 | بقیه: ۲۰٪ مسیر تا تارگت فعلی صرافی (هر چرخه زنده خوانده می‌شود)"""
+    g = 1 if is_long else -1
+    t = state["targets"].get(pos_id)
+    if t and t.get("is_auto") and t.get("tp2"):
+        tp_ref, frac = float(t["tp2"]), RF_AUTO_FRAC
+    else:
+        tp_ref, frac = cur_tp, RF_MANUAL_FRAC
+    if not (tp_ref > 0 and (tp_ref - entry) * g > 0):
+        # بدون تارگت معتبر: تارگت فرضی = ۳ برابر فاصله ورود تا استاپ (فقط برای محاسبه)
+        if cur_sl > 0 and (entry - cur_sl) * g > 0:
+            tp_ref = entry + g * RF_NO_TP_RR * abs(entry - cur_sl)
+        else:
+            tp_ref = 0
+    if tp_ref > 0:
+        move_pct = frac * abs(tp_ref - entry) / entry * 100
+    else:
+        move_pct = RF_FALLBACK_PCT
+    move_pct = max(move_pct, RF_MIN_MOVE_PCT)
+    return entry * (1 + g * move_pct / 100)
 
 # ===== تشخیص تغییر دستی استاپ توسط کاربر =====
 def detect_user_sl(state, pos_id, key_base, cur_sl, price):
@@ -693,7 +722,7 @@ STAGE_TEXT = {
 }
 
 AUTO_STAGE_TEXT = {
-    0: ("منتظر ریسک‌فری (۰.۷۰٪)", "ریسک‌فری"),
+    0: ("منتظر ریسک‌فری (۵۰٪ مسیر TP2)", "ریسک‌فری"),
     1: ("✅ ریسک‌فری شد (منتظر TP4)", "TP4"),
     2: ("✅ TP4 زده شد، استاپ روی TP1 قفل شد", "TP نهایی"),
 }
@@ -790,24 +819,25 @@ def manage_positions(state):
         lock_line = "✋ استاپ دستی؛ ربات دست نمی‌زند\n" if locked else ""
 
         # =====================================================================
-        # 👇 ریسک‌فری برای همه پوزیشن‌ها (۰.۷۰٪ حرکت به نفع پوزیشن، یک‌بار برای هر پوزیشن)
+        # 👇 ریسک‌فری برای همه پوزیشن‌ها (خودکار: ۵۰٪ مسیر TP2 | بقیه: ۲۰٪ مسیر تارگت فعلی | یک‌بار برای هر پوزیشن)
         # =====================================================================
         rf = state.setdefault("rf_done", {})
         if not locked and entry > 0 and price > 0 and pos_id not in rf:
-            move = ((price - entry) if is_long else (entry - price)) / entry * 100
-            if move >= 0.70:
+            trig = rf_trigger_price(state, pos_id, entry, is_long, cur_tp, cur_sl)
+            if (price >= trig) if is_long else (price <= trig):
                 be = entry * (1.0012 if is_long else 0.9988)  # پوشش کارمزد
                 better = (is_long and cur_sl >= be) or (not is_long and 0 < cur_sl <= be)
+                behind = (is_long and be < price) or (not is_long and be > price)
                 if better:
                     rf[pos_id] = True
-                elif safe_patch(state, pos_id, be, cur_tp if cur_tp > 0 else 0):
+                elif behind and safe_patch(state, pos_id, be, cur_tp if cur_tp > 0 else 0):
                     rf[pos_id] = True
                     cur_sl = be
                     pos["stopLoss"] = str(be)
                     t_rf = state["targets"].get(pos_id)
                     if t_rf and t_rf.get("is_auto") and t_rf.get("current_stage", 0) < 1:
                         t_rf["current_stage"] = 1
-                    notify(f"🛡️ ریسک‌فری {key_base}: قیمت ۰.۷۰٪ به نفع پوزیشن رفت، استاپ روی {fmt_num(be)} (ورود + بافر کارمزد)")
+                    notify(f"🛡️ ریسک‌فری {key_base}: قیمت به نقطه ریسک‌فری ({fmt_num(trig)}) رسید، استاپ روی {fmt_num(be)} (ورود + بافر کارمزد)")
         # =====================================================================
 
         # 👇 پردازش پوزیشن‌های خودکار
