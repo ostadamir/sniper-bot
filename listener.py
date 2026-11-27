@@ -2,21 +2,16 @@ import os, re, json, requests
 from datetime import datetime, timezone
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
-import google.generativeai as genai
 
 TG_SESSION = os.environ.get("TG_SESSION")
 MAIN_BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MAIN_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
-
-if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 
 CHANNEL_ID = -1004400244481
-MAX_AGE_SEC = 7200  # 👈 فیکس شد: ۲ ساعت (تا اگر گیت‌هاب تاخیر داشت سیگنال از دست نره)
+MAX_AGE_SEC = 7200  # 👈 ۲ ساعت، تا اگر گیت‌هاب تاخیر کرد سیگنال از دست نره
 
 PROCESSED_FILE = "processed_signals.json"
 QUEUE_FILE = "pending_signals.txt"
@@ -69,34 +64,6 @@ def find_tag(text_upper):
     tags = [t for t in re.findall(HASHTAG_REGEX, text_upper) if t not in ("#SIGNAL", "#FUTURES", "#CRYPTO")]
     return tags[0] if tags else None
 
-def extract_signal_with_ai(text):
-    if not GEMINI_KEY: return None
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"""
-        You are a crypto signal parser. Extract the trade signal from the text below.
-        Return ONLY a valid JSON object with the following structure:
-        {{
-          "is_signal": true/false,
-          "symbol": "ETH",
-          "side": "LONG" or "SHORT",
-          "entry": 1625.31,
-          "sl": 1632.73,
-          "tps": [1617.85, 1610.40, 1602.99, 1595.62, 1588.27],
-          "tag": "#A533" (if exists, else null),
-          "is_limit": true/false
-        }}
-        If it's not a trading signal, return {{"is_signal": false}}.
-        
-        Text:
-        {text}
-        """
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"AI Error: {e}", flush=True)
-        return None
-
 def run_listener():
     if not TG_SESSION: return
 
@@ -128,9 +95,8 @@ def run_listener():
                 text = msg.raw_text
                 text_upper = text.upper()
                 current_tag = find_tag(text_upper)
-                is_limit = "LIMIT" in text_upper # 👈 فیکس شد: این متغیر تعریف نشده بود
+                is_limit = "LIMIT" in text_upper
                 
-                # کنسل کردن لیمیت‌ها
                 if current_tag and any(k in text for k in CANCEL_KEYWORDS):
                     if f"cancel_{current_tag}" not in processed:
                         print(f"🚫 Detected cancel for {current_tag}", flush=True)
@@ -142,60 +108,7 @@ def run_listener():
                 if "منقضی شده" in text or "تاچ شد" in text or "لغو" in text:
                     continue
 
-                # 👇 پردازش اصلی با هوش مصنوعی
-                if any(k in text_upper for k in ["ENTER", "STOP", "TP", "#SIGNAL", "LONG", "SHORT"]):
-                    ai_data = extract_signal_with_ai(text)
-                    
-                    if ai_data and ai_data.get("is_signal"):
-                        try:
-                            symbol = str(ai_data["symbol"]).upper().replace("USDT", "")
-                            side = str(ai_data["side"]).upper()
-                            entry = float(ai_data["entry"])
-                            sl = float(ai_data["sl"])
-                            tps = [float(x) for x in ai_data["tps"]]
-                            ai_tag = ai_data.get("tag")
-                            ai_is_limit = ai_data.get("is_limit", False)
-
-                            if side not in ("LONG", "SHORT") or entry <= 0 or sl <= 0 or not tps:
-                                raise ValueError("Invalid AI data")
-
-                            # پر کردن تارگت‌های جا افتاده
-                            while len(tps) < 5:
-                                if len(tps) >= 2: step = abs(tps[-1] - tps[-2])
-                                else:
-                                    step = abs(tps[0] - entry)
-                                    if step == 0: step = entry * 0.01
-                                if side == "LONG": tps.append(tps[-1] + step)
-                                else: tps.append(tps[-1] - step)
-                            
-                            tps = tps[:5]
-                            if any(x <= 0 for x in tps): continue
-                            
-                            if ai_is_limit:
-                                current_tag = ai_tag if ai_tag else current_tag
-                                if not current_tag:
-                                    send_alert(f"⚠️ سیگنال لیمیت {symbol} هشتگ نداشت و رد شد.")
-                                    continue
-                            else:
-                                current_tag = ai_tag
-                                
-                            fingerprint = f"{symbol}_{side}_{entry}_{sl}"
-                            if fingerprint in processed: continue
-
-                            cmd_type = "/auto_limit" if ai_is_limit else "/auto"
-                            tag_suffix = f" {current_tag}" if current_tag else ""
-                            cmd = f"{cmd_type} {symbol} {side} {entry} {sl} {' '.join([str(x) for x in tps])}{tag_suffix}"
-
-                            print(f"🧠 AI Found Signal: {fingerprint}", flush=True)
-                            send_to_main_bot(cmd)
-                            processed.append(fingerprint)
-                            new_processed = True
-                            continue
-                            
-                        except Exception as parse_err:
-                            print(f"AI Parse Error: {parse_err}", flush=True)
-
-                # 👇 فالبک (پشتیبان) با Regex در صورت خرابی هوش مصنوعی
+                # 👇 پارس کردن با Regex (بدون هوش مصنوعی)
                 if "ENTER" in text_upper and ("STOP LOSS" in text_upper or "STOPLOSS" in text_upper or "SL:" in text_upper):
                     try:
                         symbol_match = re.search(r'([A-Z0-9]+)[/]?USDT', text_upper)
@@ -241,12 +154,12 @@ def run_listener():
                         tag_suffix = f" {current_tag}" if is_limit else ""
                         cmd = f"{cmd_type} {symbol} {side} {entry} {sl} {' '.join([str(x) for x in tps])}{tag_suffix}"
 
-                        print(f"🎯 Fallback Found Signal: {fingerprint}", flush=True)
+                        print(f"🎯 Found Signal: {fingerprint}", flush=True)
                         send_to_main_bot(cmd)
                         processed.append(fingerprint)
                         new_processed = True
                     except Exception as e:
-                        print(f"Fallback Parse error: {e}", flush=True)
+                        print(f"Parse error: {e}", flush=True)
 
             if new_processed:
                 save_processed(processed)
