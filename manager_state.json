@@ -15,10 +15,6 @@
     "custom_dashboard_id": 874,
     "rf_done": {},
     "sl_track": {
-        "2716917160": {
-            "v": 0.0,
-            "fresh": false
-        },
         "2716987302": {
             "v": 0.9432,
             "fresh": false
@@ -29,6 +25,7 @@
         }
     },
     "sl_user": {
-        "2716917160": "GRAM_SHORT"
+        "2716998866": "HYPE_SHORT",
+        "2716987302": "XRP_SHORT"
     }
 }
